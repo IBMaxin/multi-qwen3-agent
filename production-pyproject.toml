@@ -1,0 +1,129 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qwen_pipeline"
+version = "1.0.0"
+description = "Production-ready Qwen-Agent pipeline for safe coding tasks"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "qwen-agent[code_interpreter]",
+    "asteval",
+    "json5",
+    "structlog",
+    "sentry-sdk",
+    "openai",  # For Ollama API compatibility
+    "requests",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "coverage", "ruff", "black", "mypy"]
+prod = ["sentry-sdk"]
+
+[project.scripts]
+qwen-pipeline = "qwen_pipeline.cli:main"
+
+[tool.black]
+line-length = 100
+target-version = ['py310', 'py311', 'py312']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.mypy_cache
+  | \.ruff_cache
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "N",      # pep8-naming
+    "UP",     # pyupgrade
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "DTZ",    # flake8-datetimez
+    "T10",    # flake8-debugger
+    "EM",     # flake8-errmsg
+    "ISC",    # flake8-implicit-str-concat
+    "ICN",    # flake8-import-conventions
+    "G",      # flake8-logging-format
+    "PIE",    # flake8-pie
+    "T20",    # flake8-print
+    "PT",     # flake8-pytest-style
+    "Q",      # flake8-quotes
+    "RSE",    # flake8-raise
+    "RET",    # flake8-return
+    "SIM",    # flake8-simplify
+    "TID",    # flake8-tidy-imports
+    "TCH",    # flake8-type-checking
+    "ARG",    # flake8-unused-arguments
+    "PTH",    # flake8-use-pathlib
+    "ERA",    # eradicate
+    "PL",     # pylint
+    "TRY",    # tryceratops
+    "RUF",    # ruff-specific rules
+]
+ignore = [
+    "T20",    # Allow print statements
+    "TRY003", # Allow long exception messages
+    "EM101",  # Allow string literals in exceptions
+    "PLR0913", # Allow many arguments in function definition
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]  # Allow unused imports in __init__
+"tests/*" = ["ARG", "PLR2004", "S101"]  # Allow test-specific patterns
+
+[tool.ruff.lint.isort]
+known-first-party = ["qwen_pipeline"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
+[tool.bandit]
+exclude_dirs = [".venv", "venv", "build", "dist"]
+tests = ["B102", "B103", "B301", "B302", "B303", "B304", "B305", "B306", "B307", "B308"]
+# B102: exec_used - BANNED
+# B103: pickle - Potentially unsafe
+# B301: pickle - Potentially unsafe
+# B302-309: Various unsafe deserialization
+
+[tool.bandit.assert_used]
+skips = ["*/tests/*", "test_*.py"]

@@ -1,0 +1,14 @@
+# Normalize line endings to LF in repo; Windows working copies can still use CRLF
+* text=auto
+
+# Common text files use LF
+*.py   text eol=lf
+*.md   text eol=lf
+*.toml text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.ini  text eol=lf
+
+# Keep PowerShell scripts CRLF if present
+*.ps1 text eol=crlf

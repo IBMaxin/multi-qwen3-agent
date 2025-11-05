@@ -1,0 +1,153 @@
+name: Qwen-Agent Standards Enforcement
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  enforce-qwen-standards:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Cache dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        cd production
+        pip install -e .[dev]
+
+    - name: 🔍 Security Scan (Block exec/eval)
+      run: |
+        cd production
+        bandit -r qwen_pipeline/ -c ../production-pyproject.toml
+      continue-on-error: false
+
+    - name: 🎨 Code Style Check (Qwen Standards)
+      run: |
+        cd production
+        black --check --line-length 100 qwen_pipeline/
+        ruff check qwen_pipeline/
+
+    - name: 🔬 Type Checking (Strict Mode)
+      run: |
+        cd production
+        mypy qwen_pipeline/ --config-file ../production-pyproject.toml
+
+    - name: 🧪 Run Tests
+      run: |
+        cd production
+        pytest tests/ -v --cov=qwen_pipeline --cov-report=term-missing
+
+    - name: 📊 Coverage Report
+      run: |
+        cd production
+        coverage report --fail-under=80
+
+    - name: 🔐 Check for Secrets
+      uses: trufflesecurity/trufflehog@main
+      with:
+        path: ./
+        base: ${{ github.event.repository.default_branch }}
+        head: HEAD
+
+  check-qwen-compatibility:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+
+    - name: Install Qwen-Agent
+      run: |
+        pip install qwen-agent
+
+    - name: Verify Import Compatibility
+      run: |
+        python -c "
+        from qwen_agent.agents import Assistant, ReActChat
+        from qwen_agent.tools.base import BaseTool, register_tool
+        from qwen_agent.gui import WebUI
+        print('✅ All official Qwen-Agent imports work!')
+        "
+
+    - name: Check for Anti-Patterns
+      run: |
+        echo "🔍 Checking for common anti-patterns..."
+
+        # Check for exec/eval
+        if grep -r "exec(" production/qwen_pipeline/ --include="*.py"; then
+          echo "❌ Found exec() - BANNED!"
+          exit 1
+        fi
+
+        if grep -r "eval(" production/qwen_pipeline/ --include="*.py" | grep -v "asteval"; then
+          echo "❌ Found eval() - Use asteval instead!"
+          exit 1
+        fi
+
+        # Check for custom Agent subclasses (should use official agents)
+        if grep -r "class.*Agent.*:" production/qwen_pipeline/ --include="*.py" | grep -v "# Official"; then
+          echo "⚠️  Warning: Custom Agent subclass detected. Use official agents!"
+        fi
+
+        echo "✅ No anti-patterns found!"
+
+  lint-examples:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+
+    - name: Install dependencies
+      run: |
+        pip install ruff black
+
+    - name: Check Examples Follow Official Pattern
+      run: |
+        echo "🔍 Verifying examples follow official Qwen pattern..."
+
+        for file in examples/*.py; do
+          echo "Checking $file..."
+
+          # Must have init_agent_service function
+          if ! grep -q "def init_agent_service" "$file"; then
+            echo "❌ $file missing init_agent_service() function"
+            exit 1
+          fi
+
+          # Should have standard structure
+          if grep -q "def app_gui" "$file"; then
+            echo "  ✅ Has app_gui()"
+          fi
+
+          # Check line length
+          black --check --line-length 100 "$file" || {
+            echo "  ⚠️  Line length issues (run black to fix)"
+          }
+        done
+
+        echo "✅ All examples follow official pattern!"
