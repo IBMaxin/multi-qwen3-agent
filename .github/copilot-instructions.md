@@ -1,60 +1,121 @@
-3. Use `@register_tool` for tools - don't invent new patterns
-## QwenAgent-Best – Copilot instructions
+## QwenAgent-Best – AI Agent Instructions
 
-These are the essentials an AI coding agent needs to work productively in this repo. Keep it concise, stay within official Qwen-Agent patterns, and prefer editing existing modules over inventing new ones.
+Consolidated Qwen-Agent implementation with production-grade multi-agent system and example tools. **Python 3.10 ONLY** (newer versions not supported). Follow official Qwen-Agent patterns exclusively—no custom inventions.
 
-### Big picture
-- Two tracks:
-    - `production/`: Modular, test-backed multi‑agent system with HITL (Planner → Coder → Reviewer). See `agent.py:create_agents`, `pipeline.py:run_pipeline`, `tools.py:SafeCalculatorTool`, `config.py:get_llm_config`.
-    - `examples/`: Self‑contained demo with richer tools and GUI. See `examples/qwen3-agentV2-complete.py` and `examples/run_qwen_gui.py`.
-- LLM runs via Ollama’s OpenAI‑compatible endpoint; config is env‑driven and centralized in `production/config.py`.
+### Architecture Overview
 
-### Run and verify (local, Windows PowerShell)
+**Two parallel tracks:**
+- `production/qwen_pipeline/`: Modular HITL system with Planner → Coder → Reviewer agents in a `GroupChat`
+  - Entry: `agent.py:create_agents()` wires agents; `pipeline.py:run_pipeline()` orchestrates flow
+  - Config: `config.py:get_llm_config()` reads env vars (with dotenv support) and returns Qwen-Agent dict
+  - Safety: `tools.py:SafeCalculatorTool` uses `asteval.Interpreter()` (no `exec`/`eval`)
+  - HITL: `pipeline.py:human_approval()` gates critical steps (yes/no/edit) with `structlog` logging
+  - CLI: `cli.py:main()` provides interactive terminal interface
+- `examples/`: Self-contained demos with richer tools (DuckDuckGo search, image gen, filesystem, Gradio GUI)
+  - Canonical example: `examples/qwen3-agentV2-complete.py` (498 lines, full toolset)
+  - GUI demo: `examples/run_qwen_gui.py` (uses `qwen_agent.gui.WebUI`)
+
+**LLM integration:** Ollama's OpenAI-compatible endpoint (`http://localhost:11434/v1`). Config centralized in `production/qwen_pipeline/config.py` with env-driven defaults from `.env` (uses `python-dotenv` for auto-loading).
+
+### Critical Developer Workflows
+
 ```pwsh
-# Ollama
-ollama serve
-ollama pull qwen3:8b
+# Setup (Windows PowerShell, Python 3.10 venv required)
+ollama serve                           # Start Ollama
+ollama pull qwen3:8b                   # Pull model (or qwen3:4b)
+cp .env.example .env                   # Configure: MODEL_SERVER, MODEL_NAME, API_KEY=EMPTY
+cd production && pip install -e .      # Install qwen_pipeline package
+python -m qwen_pipeline.cli            # Run production HITL pipeline
 
-# Env
-cp .env.example .env  # MODEL_SERVER=http://localhost:11434/v1, MODEL_NAME=qwen3:8b, API_KEY=EMPTY
+# Quality gates (run from repo root)
+make check-standards                   # Full check: ruff, mypy, bandit (blocks exec/eval)
+cd production && pytest -v             # Run tests
+coverage run -m pytest && coverage report  # Coverage (aim for 100%)
 
-# Production pipeline (HITL)
-# IMPORTANT: run as a module from repo root to preserve package-relative imports
-python -m production.cli
-
-# Tests and coverage (production only)
-cd production; pytest -v; coverage run -m pytest; coverage report
+# Individual checks
+ruff check . --fix                     # Lint + auto-fix
+black --line-length 100 production/ examples/  # Format
+mypy production/qwen_pipeline/ --config-file production-pyproject.toml  # Type check
+bandit -r production/qwen_pipeline/    # Security scan
 ```
 
-### Core patterns you must follow
-- Agents: use official classes only. `Assistant` and `ReActChat` assembled into a `GroupChat` (see `production/agent.py`).
-- Tools: subclass `BaseTool` and decorate with `@register_tool`. Parse input with `json5.loads(params: str)` and return `json.dumps(...)` string. Example: `SafeCalculatorTool` in `production/tools.py`.
-- Safety: never use `exec()`/`eval()`. Use `asteval.Interpreter()` for math. Coder agent is instructed “No file/system access.”
-- HITL: all critical outputs flow through `human_approval(step_name, content)` in `production/pipeline.py` (options: yes/no/edit) and are logged.
-- Logging: use `structlog.get_logger()`; no `print()` in production modules (CLI may print for UX/HITL prompt).
+### Qwen-Agent Patterns (Strictly Enforce)
 
-### Configuration and integration
-- `get_llm_config()` builds the dict consumed by Qwen‑Agent: `{model, model_server, api_key, generate_cfg}` with sensible defaults.
-- Optional monitoring: set `SENTRY_DSN` to enable Sentry in `production/config.py`.
-- Typical toolset: `['code_interpreter', SafeCalculatorTool()]` passed into `create_agents()`; add new tools by expanding this list.
+**Agent creation:** Use official classes only. See `production/qwen_pipeline/agent.py:create_agents()`:
+```python
+from qwen_agent.agents import Assistant, ReActChat, GroupChat
+llm_cfg = get_llm_config()
+planner = Assistant(llm=llm_cfg, system_message="...", name="planner")
+coder = ReActChat(llm=llm_cfg, function_list=tools, system_message="...", name="coder")
+manager = GroupChat(agents=[planner, coder, reviewer], llm=llm_cfg)
+```
 
-### Tests and quality gates
-- Primary tests live in `production/tests/` (e.g., `test_pipeline.py`, `test_tools.py`). Aim for full coverage when changing public behavior.
-- Standards (see `QWEN_STANDARDS.md`):
-    - Keep to official Qwen‑Agent APIs and message formats.
-    - Type hints required; 100‑char lines; import order per checklist; no `exec`/`eval`.
-    - Run: `make check-standards` or individually `ruff`, `mypy`, `bandit`.
+**Tool registration:** Subclass `BaseTool`, decorate with `@register_tool`. See `production/qwen_pipeline/tools.py:SafeCalculatorTool`:
+```python
+from qwen_agent.tools.base import BaseTool, register_tool
+import json5, json
 
-### Useful references in this repo
-- Agent wiring: `production/agent.py:create_agents` (Planner/Coder/Reviewer → `GroupChat`).
-- HITL flow: `production/pipeline.py:human_approval`, `run_pipeline`.
-- Safe tool example: `production/tools.py:SafeCalculatorTool` (JSON5 in, JSON string out).
-- Rich demo tools and GUI: `examples/qwen3-agentV2-complete.py` (DuckDuckGo search, image gen, calculator, filesystem), `examples/run_qwen_gui.py`.
+@register_tool("safe_calculator")
+class SafeCalculatorTool(BaseTool):
+    description = "Safely calculate math like sqrt(16) or sin(3.14)."
+    parameters = [{"name": "expression", "type": "string", "required": True}]
+    
+    def call(self, params: str, **kwargs) -> str:
+        params_dict = json5.loads(params)  # Parse JSON5 string input
+        result = self.aeval(expression)    # asteval.Interpreter() instance
+        return json.dumps({"result": result})  # Return JSON string
+```
 
-### Pitfalls to avoid
-- Wrong endpoint: Ollama requires `/v1` suffix.
-- Wrong tool I/O types: always parse JSON5 string and return JSON string.
-- Blocking on HITL in non‑interactive contexts—stub or mock `human_approval` in tests.
-- Missing model: run `ollama pull qwen3:8b` before executing.
+**Message format:** Official schema only: `[{"role": "user", "content": "Hello"}]`
 
-Golden rule: “If it’s not in the official Qwen‑Agent examples, don’t do it.” See `QWEN_STANDARDS.md` for specifics.
+**Import order:** (1) stdlib (2) third-party non-Qwen (3) qwen_agent (4) local. See `QWEN_STANDARDS.md`.
+
+### Production-Specific Conventions
+
+**HITL:** `production/qwen_pipeline/pipeline.py:human_approval(step_name, content)` prompts `yes/no/edit`, logs with `structlog`, raises `ValueError` on rejection. Tests must mock: `@patch("qwen_pipeline.pipeline.human_approval", return_value="mock")`
+
+**Logging:** Use `structlog.get_logger()`; no `print()` in production modules (CLI may print for UX).
+
+**Safety:** `exec()`/`eval()` BANNED (pre-commit blocks). Use `asteval.Interpreter()` for math.
+
+**Testing example from `production/tests/test_pipeline.py`:**
+```python
+@patch("qwen_pipeline.pipeline.human_approval", return_value="mock output")
+@patch("qwen_pipeline.pipeline.create_agents")
+def test_run_pipeline(mock_agents, mock_approval):
+    result = run_pipeline("query")
+    assert "mock" in result
+```
+
+### Configuration & Integration
+
+**LLM config:** `production/qwen_pipeline/config.py:get_llm_config()` reads:
+- `MODEL_SERVER` (default: `http://localhost:11434/v1` — `/v1` suffix required!)
+- `MODEL_NAME` (default: `qwen3:8b`)
+- `API_KEY` (default: `EMPTY` for Ollama)
+- Returns dict with `generate_cfg: {top_p: 0.8, temperature: 0.7, max_input_tokens: 6000}`
+
+**Tools:** Pass list to `create_agents()`: `['code_interpreter', SafeCalculatorTool()]`
+
+**Monitoring:** Set `SENTRY_DSN` in `.env` to enable Sentry in `production/qwen_pipeline/config.py:get_llm_config()`.
+
+### Common Pitfalls
+
+- **Missing `/v1` suffix:** Ollama endpoint must be `http://localhost:11434/v1`
+- **Wrong tool I/O:** Always `json5.loads(params: str)` input, `json.dumps(...)` output
+- **Module imports:** Run as module: `python -m qwen_pipeline.cli` (not `python production/cli.py`)
+- **Blocking HITL:** Mock `human_approval` in tests
+- **Missing model:** Run `ollama pull qwen3:8b` before executing
+- **Python version:** Only 3.10.x supported
+
+### Key Files Reference
+
+- Agent wiring: `production/qwen_pipeline/agent.py:create_agents` (Planner/Coder/Reviewer → `GroupChat`)
+- HITL flow: `production/qwen_pipeline/pipeline.py:human_approval`, `run_pipeline`
+- Safe tool example: `production/qwen_pipeline/tools.py:SafeCalculatorTool` (JSON5 in, JSON string out, asteval)
+- Config builder: `production/qwen_pipeline/config.py:get_llm_config`
+- Rich example: `examples/qwen3-agentV2-complete.py` (DuckDuckGo, image gen, calculator, GUI)
+- Standards checklist: `QWEN_STANDARDS.md` (official patterns, pre-commit rules)
+- Test patterns: `production/tests/test_pipeline.py` (HITL mocking)
+
+**Golden rule:** "If it's not in the official Qwen-Agent examples, don't do it." See `QWEN_STANDARDS.md` for specifics.
