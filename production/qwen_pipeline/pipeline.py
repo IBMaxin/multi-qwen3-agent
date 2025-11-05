@@ -53,13 +53,27 @@ def run_pipeline(query: str) -> str:
     tools: list[str | SafeCalculatorTool] = ["code_interpreter", SafeCalculatorTool()]
     messages: list[dict[str, str]] = [{"role": "user", "content": query}]
 
+    def _ensure_nonempty(resps: list[Any]) -> None:
+        if not resps:
+            raise ValueError("No response from agent")
+
     try:
         manager = create_agents(tools)
         responses: list[Any] = []
         for response in manager.run(messages=messages):
-            # Accumulate streaming responses; each item is a dict with at least 'content'.
-            responses.append(response)
-        output: str = responses[-1]["content"]
+            # ✅ CORRECT: Accumulate all responses
+            if isinstance(response, dict):
+                responses.append(response)
+            else:
+                responses.append({"content": str(response)})
+
+        _ensure_nonempty(responses)
+
+        output: str = responses[-1].get("content", "")
+        if not output:
+            logger.warning("Agent returned empty content")
+            output = "No response generated"
+
         output = human_approval("Final Output", output)
         logger.info({"event": "pipeline_complete"})
     except Exception as e:

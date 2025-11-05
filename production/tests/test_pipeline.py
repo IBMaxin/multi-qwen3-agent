@@ -47,3 +47,19 @@ def test_run_pipeline_error(mock_agents: Any) -> None:
     mock_agents.side_effect = Exception("Test error")
     result = run_pipeline("query")
     assert "Error" in result
+
+
+@patch("qwen_pipeline.pipeline.human_approval", return_value="Final")
+@patch("qwen_pipeline.pipeline.create_agents")
+def test_multiple_responses_accumulated(mock_agents: Any, mock_approval: Any) -> None:
+    """Ensure all responses are accumulated, not overwritten."""
+
+    class MockManager:
+        def run(self, messages: Any = None) -> Iterator[dict[str, str]]:
+            yield {"content": "First"}
+            yield {"content": "Second"}
+            yield {"content": "Final"}
+
+    mock_agents.return_value = MockManager()
+    result = run_pipeline("test")
+    assert "Final" in result

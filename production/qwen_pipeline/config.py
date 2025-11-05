@@ -2,6 +2,7 @@ import logging
 import os
 from typing import Any
 
+import requests  # type: ignore[import-untyped]
 import sentry_sdk
 import structlog
 from dotenv import find_dotenv, load_dotenv
@@ -10,11 +11,34 @@ logging.basicConfig(level=logging.INFO)
 structlog.configure(logger_factory=structlog.stdlib.LoggerFactory())
 logger = structlog.get_logger()
 
+_HTTP_OK = 200
+
+
+def _is_ollama_reachable(model_server: str) -> bool:
+    """Check if Ollama server is reachable (non-blocking).
+
+    Args:
+        model_server: The Ollama server URL.
+
+    Returns:
+        True if server is reachable, False otherwise.
+    """
+    try:
+        health_url = model_server.replace("/v1", "/health")
+        response: Any = requests.get(health_url, timeout=2)
+    except Exception:
+        return False
+    else:
+        return bool(response.status_code == _HTTP_OK)
+
+
 # Load variables from .env if present. Does not override explicit environment values.
 _dotenv_path = find_dotenv(usecwd=True)
 if _dotenv_path:
     load_dotenv(dotenv_path=_dotenv_path, override=False)
-    logger.info(".env loaded", path=_dotenv_path)
+    logger.info("✓ .env file loaded", path=_dotenv_path)
+else:
+    logger.info(".env not found - using environment variables only")
 
 
 def _get_env_float(name: str, default: float | None) -> float | None:
@@ -40,7 +64,7 @@ def _get_env_int(name: str, default: int | None) -> int | None:
 
 
 def get_llm_config() -> dict[str, Any]:
-    """Get LLM config from env vars for Ollama.
+    """Get LLM config from env vars for Ollama with validation.
 
     Returns:
         Config dict with Ollama model configuration.
@@ -48,6 +72,14 @@ def get_llm_config() -> dict[str, Any]:
     model_server: str = os.getenv("MODEL_SERVER", "http://localhost:11434/v1")
     api_key: str = os.getenv("API_KEY", "EMPTY")
     model_name: str = os.getenv("MODEL_NAME", "qwen3:8b")
+
+    # Validate Ollama connectivity (non-blocking warning)
+    if not _is_ollama_reachable(model_server):
+        logger.warning(
+            "⚠ Ollama server may not be reachable",
+            model_server=model_server,
+            tip="Ensure 'ollama serve' is running",
+        )
 
     # Base generation defaults (can be overridden via env below)
     generate_cfg: dict[str, Any] = {
@@ -78,7 +110,7 @@ def get_llm_config() -> dict[str, Any]:
     }
 
     logger.info(
-        "LLM config initialized",
+        "✓ LLM config initialized",
         model=model_name,
         server=model_server,
     )
@@ -86,6 +118,6 @@ def get_llm_config() -> dict[str, Any]:
     sentry_dsn: str | None = os.getenv("SENTRY_DSN")
     if sentry_dsn:
         sentry_sdk.init(dsn=sentry_dsn, traces_sample_rate=1.0)
-        logger.info("Sentry initialized for monitoring.")
+        logger.info("✓ Sentry monitoring enabled")
 
     return config

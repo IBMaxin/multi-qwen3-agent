@@ -28,8 +28,8 @@ class SafeCalculatorTool(BaseTool):
         self.aeval: Interpreter = Interpreter()
         logger.info("SafeCalculatorTool initialized.")
 
-    def call(self, params: str, **_kwargs: Any) -> str:
-        """Call the calculator.
+    def call(self, params: str, **_kwargs: Any) -> str:  # noqa: PLR0911
+        """Call the calculator with robust error handling.
 
         Args:
             params: JSON string with expression.
@@ -39,17 +39,96 @@ class SafeCalculatorTool(BaseTool):
             JSON string with result or error.
         """
         logger.info({"event": "calculator_call", "params": params})
-        params_dict: dict[str, str] = json5.loads(params)
-        expression: str = params_dict["expression"]
+
+        # Validate JSON structure
+        try:
+            params_dict: dict[str, str] = json5.loads(params)
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning(
+                "calculator_invalid_json",
+                raw_params=params[:100],  # Truncate for logging
+                error=str(e),
+            )
+            return json.dumps({"error": "Invalid JSON parameters"})
+
+        # Validate required field
+        if "expression" not in params_dict:
+            logger.warning("calculator_missing_expression", keys=list(params_dict.keys()))
+            return json.dumps(
+                {
+                    "error": "Missing 'expression' parameter",
+                    "expected_keys": ["expression"],
+                }
+            )
+
+        expression: str = str(params_dict["expression"]).strip()
+
+        # Validate non-empty
+        if not expression:
+            logger.warning("calculator_empty_expression")
+            return json.dumps({"error": "Expression cannot be empty"})
+
+        # Limit expression length (prevent abuse)
+        max_expr_len = 500
+        if len(expression) > max_expr_len:
+            logger.warning(
+                "calculator_expr_too_long",
+                length=len(expression),
+                max=max_expr_len,
+            )
+            return json.dumps({"error": f"Expression too long (max {max_expr_len} chars)"})
+
         try:
             result: Any = self.aeval(expression)
+
             if result is None:
-                logger.error(
-                    {"event": "calculator_error", "error": "Invalid expression or no result."}
+                logger.warning("calculator_null_result", expression=expression)
+                return json.dumps(
+                    {
+                        "error": "Expression returned no value",
+                        "expression": expression,
+                    }
                 )
-                return json.dumps({"error": "Invalid expression or no result."})
-            logger.info({"event": "calculator_success", "result": result})
+
+            # Convert numpy types to native Python types for JSON serialization
+            if hasattr(result, "item"):  # numpy scalar
+                result = result.item()
+            elif isinstance(result, (list, tuple)):
+                result = [x.item() if hasattr(x, "item") else x for x in result]
+
+            logger.info(
+                "calculator_success",
+                expression=expression,
+                result=result,
+            )
             return json.dumps({"result": result})
-        except Exception as e:
-            logger.exception({"event": "calculator_error"})
-            return json.dumps({"error": str(e)})
+
+        except ZeroDivisionError:
+            logger.warning("calculator_division_by_zero", expression=expression)
+            return json.dumps(
+                {
+                    "error": "Division by zero",
+                    "expression": expression,
+                }
+            )
+
+        except (ValueError, SyntaxError) as e:
+            logger.warning(
+                "calculator_invalid_expression",
+                expression=expression,
+                error_type=type(e).__name__,
+            )
+            return json.dumps(
+                {
+                    "error": f"Invalid expression: {str(e)[:100]}",
+                    "expression": expression,
+                }
+            )
+
+        except Exception:
+            logger.exception(
+                "calculator_unexpected_error",
+                expression=expression,
+            )
+            # Don't leak internal errors to user
+            return json.dumps({"error": "Calculation failed (internal error)"})

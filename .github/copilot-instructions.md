@@ -59,7 +59,7 @@ import json5, json
 class SafeCalculatorTool(BaseTool):
     description = "Safely calculate math like sqrt(16) or sin(3.14)."
     parameters = [{"name": "expression", "type": "string", "required": True}]
-    
+
     def call(self, params: str, **kwargs) -> str:
         params_dict = json5.loads(params)  # Parse JSON5 string input
         result = self.aeval(expression)    # asteval.Interpreter() instance
