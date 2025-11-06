@@ -12,8 +12,10 @@ def test_metrics_records_success_and_resets():
         def run(self, messages=None):
             yield {"content": "ok"}
 
-    with patch("qwen_pipeline.pipeline.create_agents", return_value=Manager()), \
-        patch("qwen_pipeline.pipeline.human_approval", return_value="ok"):
+    with (
+        patch("qwen_pipeline.pipeline.create_agents", return_value=Manager()),
+        patch("qwen_pipeline.pipeline.human_approval", return_value="ok"),
+    ):
         result = run_pipeline("test", timeout_seconds=5)
 
     assert result == "ok"

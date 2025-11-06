@@ -8,8 +8,10 @@ def test_run_pipeline_structured_success():
         def run(self, messages=None):
             yield {"content": "final"}
 
-    with patch("qwen_pipeline.pipeline.create_agents", return_value=Manager()), \
-        patch("qwen_pipeline.pipeline.human_approval", return_value="final"):
+    with (
+        patch("qwen_pipeline.pipeline.create_agents", return_value=Manager()),
+        patch("qwen_pipeline.pipeline.human_approval", return_value="final"),
+    ):
         res = run_pipeline_structured("test", timeout_seconds=5)
 
     assert res.success is True

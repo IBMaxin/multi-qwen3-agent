@@ -10,6 +10,7 @@ from qwen_agent.agents import Assistant, GroupChat, ReActChat
 try:
     # qwen_agent.agent exposes TOOL_REGISTRY for available builtin tools
     from qwen_agent.agent import TOOL_REGISTRY as QWEN_TOOL_REGISTRY
+
     _REGISTRY_AVAILABLE = True
 except Exception:  # pragma: no cover - fallback if API changes
     QWEN_TOOL_REGISTRY = {}

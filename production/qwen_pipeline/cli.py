@@ -1,4 +1,7 @@
+import argparse
 import sys
+from collections.abc import Callable, Iterator
+from typing import cast
 
 import structlog
 
@@ -10,13 +13,49 @@ def run_pipeline(query: str) -> str:  # pragma: no cover - thin wrapper
     return _run(query)
 
 
+def run_pipeline_streaming(
+    query: str, *, timeout_seconds: int = -1
+) -> Iterator[str]:  # pragma: no cover - wrapper
+    from .pipeline import run_pipeline_streaming as _run_stream  # noqa: PLC0415
+
+    return _run_stream(query, timeout_seconds=timeout_seconds)
+
+
+def _get_metrics_json() -> str:  # pragma: no cover - thin wrapper
+    from .metrics import get_metrics  # noqa: PLC0415
+
+    return get_metrics().to_json()
+
+
 structlog.configure(logger_factory=structlog.stdlib.LoggerFactory())
 logger = structlog.get_logger()
 
 
-def main() -> None:
+def _parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="qwen-pipeline",
+        description="Qwen pipeline CLI",
+        add_help=True,
+    )
+    sub = parser.add_subparsers(dest="command")
+    sub.add_parser("metrics", help="Print current metrics and exit")
+
+    parser.add_argument(
+        "--stream",
+        action="store_true",
+        help="Enable streaming mode (prints chunks as they arrive)",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=60,
+        help="Timeout in seconds for pipeline (use -1 to disable, 0 for immediate)",
+    )
+    return parser.parse_args(argv)
+
+
+def _run_interactive(args: argparse.Namespace) -> None:  # noqa: PLR0912, PLR0915
     """Main CLI entry point with robust error handling."""
-    logger.info("CLI started.")
     print("Qwen Pipeline ready. Type query or 'exit'.")
 
     error_count = 0
@@ -33,13 +72,24 @@ def main() -> None:
                 if user_input.lower() in ("exit", "quit", "bye"):
                     logger.info("CLI exiting gracefully.")
                     print("Goodbye!")
-                    sys.exit(0)
-                    # In tests, sys.exit is patched and won't raise; ensure we exit the loop.
-                    break  # type: ignore[unreachable]
+                    exit_fn = cast("Callable[[int], None]", sys.exit)
+                    exit_fn(0)
+                    break
 
-                result: str = run_pipeline(user_input)
-                print(f"Agent: {result}\n")
-                error_count = 0  # Reset on success
+                if args.stream:
+                    # Stream chunks inline
+                    try:
+                        for chunk in run_pipeline_streaming(
+                            user_input, timeout_seconds=int(args.timeout)
+                        ):
+                            print(f"Agent: {chunk}")
+                        print("")
+                    finally:
+                        error_count = 0
+                else:
+                    result: str = run_pipeline(user_input)
+                    print(f"Agent: {result}\n")
+                    error_count = 0  # Reset on success
 
             except (EOFError, KeyboardInterrupt):
                 # Re-raise to outer handler
@@ -60,8 +110,9 @@ def main() -> None:
                 if error_count >= max_errors:
                     logger.exception("Too many errors, exiting")
                     print(f"Too many errors ({max_errors}). Exiting.")
-                    sys.exit(1)
-                    break  # type: ignore[unreachable]
+                    exit_fn = cast("Callable[[int], None]", sys.exit)
+                    exit_fn(1)
+                    break
 
     except KeyboardInterrupt:
         logger.info("CLI interrupted by user (Ctrl+C).")
@@ -71,3 +122,15 @@ def main() -> None:
         # Handle EOF (e.g., when piping input)
         logger.info("CLI reached EOF.")
         sys.exit(0)
+
+
+def main() -> None:
+    """CLI entry point; parses args and dispatches commands."""
+    logger.info("CLI started.")
+    args = _parse_args(sys.argv[1:])
+    if args.command == "metrics":
+        print(_get_metrics_json())
+        exit_fn = cast("Callable[[int], None]", sys.exit)
+        exit_fn(0)
+        return
+    _run_interactive(args)

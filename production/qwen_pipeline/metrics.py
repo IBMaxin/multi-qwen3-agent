@@ -81,9 +81,7 @@ class PipelineMetrics:
             "success_rate_percent": round(self.success_rate, 2),
             "avg_duration_sec": round(self.avg_duration_sec, 2),
             "min_duration_sec": (
-                0.0
-                if self.min_duration_sec == float("inf")
-                else round(self.min_duration_sec, 2)
+                0.0 if self.min_duration_sec == float("inf") else round(self.min_duration_sec, 2)
             ),
             "max_duration_sec": round(self.max_duration_sec, 2),
             "total_duration_sec": round(self.total_duration_sec, 2),

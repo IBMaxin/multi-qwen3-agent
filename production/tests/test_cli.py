@@ -1,6 +1,9 @@
 import itertools
+import sys
 from typing import Any
 from unittest.mock import patch
+
+import pytest
 
 from qwen_pipeline.cli import main
 
@@ -57,3 +60,23 @@ def test_cli_eof_handling(mock_exit: Any, mock_input: Any) -> None:
     """Test that CLI handles EOF gracefully."""
     main()
     mock_exit.assert_called_with(0)
+
+
+def test_cli_metrics_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Simulate `qwen-pipeline metrics`
+    monkeypatch.setattr(sys, "argv", ["prog", "metrics"])
+    with (
+        patch("qwen_pipeline.cli._get_metrics_json", return_value="{}"),
+        patch("sys.exit") as mock_exit,
+    ):
+        main()
+        mock_exit.assert_called_with(0)
+
+
+@patch("builtins.input", side_effect=["q", "exit"])
+@patch("qwen_pipeline.cli.run_pipeline_streaming", return_value=iter(["a", "b"]))
+@patch("sys.exit")
+def test_cli_stream_flag(mock_exit: Any, mock_stream: Any, mock_input: Any) -> None:
+    with patch.object(sys, "argv", ["prog", "--stream", "--timeout", "5"]):
+        main()
+    mock_stream.assert_called_with("q", timeout_seconds=5)

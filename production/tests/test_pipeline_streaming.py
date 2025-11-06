@@ -18,11 +18,13 @@ class _MockManager:
 @patch("qwen_pipeline.pipeline.create_agents")
 @patch("qwen_pipeline.pipeline.human_approval", return_value="Approved")
 def test_streaming_yields_messages(mock_approval: Any, mock_create: Any) -> None:
-    manager = _MockManager([
-        {"content": "Step 1"},
-        {"content": "Step 2"},
-        {"content": "Final"},
-    ])
+    manager = _MockManager(
+        [
+            {"content": "Step 1"},
+            {"content": "Step 2"},
+            {"content": "Final"},
+        ]
+    )
     mock_create.return_value = manager
 
     chunks = list(run_pipeline_streaming("hello"))

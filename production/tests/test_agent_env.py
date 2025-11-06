@@ -55,11 +55,16 @@ def test_enable_all_official_tools_and_vl(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setenv("ENABLE_VL_TOOLS", "true")
 
     # Only some tools are registered, others should be skipped with warning
-    monkeypatch.setattr(agent_mod, "QWEN_TOOL_REGISTRY", {
-        "code_interpreter": object(),
-        "web_search": object(),
-        "image_zoom_in_qwen3vl": object(),
-    }, raising=True)
+    monkeypatch.setattr(
+        agent_mod,
+        "QWEN_TOOL_REGISTRY",
+        {
+            "code_interpreter": object(),
+            "web_search": object(),
+            "image_zoom_in_qwen3vl": object(),
+        },
+        raising=True,
+    )
 
     # Force openpyxl to be missing so amap_weather is skipped
     monkeypatch.setattr(agent_mod._util, "find_spec", lambda name: None, raising=True)
