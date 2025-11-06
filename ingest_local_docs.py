@@ -13,19 +13,40 @@ This script will:
 import argparse
 import glob
 import os
+from datetime import datetime, timezone
+from pathlib import Path
+
 from production.qwen_pipeline.tools_custom import LocalVectorSearch
 
 
 def load_and_chunk_docs(folder, max_chunk_tokens=500, overlap_tokens=50):
-    docs = []
+    """Load and chunk documents with source metadata tracking."""
+    all_chunks = []
+    all_metadata = []
+
     for ext in ("*.md", "*.txt"):
         for file in glob.glob(os.path.join(folder, ext)):
-            with open(file, "r", encoding="utf-8") as f:
+            file_path = Path(file)
+            with open(file, encoding="utf-8") as f:
                 text = f.read()
                 # Use the official chunker
                 chunks = LocalVectorSearch.chunk_text(text, max_chunk_tokens, overlap_tokens)
-                docs.extend(chunks)
-    return docs
+
+                # Create metadata for each chunk
+                for i, chunk in enumerate(chunks):
+                    all_chunks.append(chunk)
+                    all_metadata.append(
+                        {
+                            "source": file_path.name,
+                            "file_path": str(file_path),
+                            "type": "local_file",
+                            "chunk_index": i,
+                            "total_chunks": len(chunks),
+                            "ingestion_date": datetime.now(timezone.utc).isoformat(),
+                        }
+                    )
+
+    return all_chunks, all_metadata
 
 
 def main():
@@ -35,12 +56,13 @@ def main():
     args = parser.parse_args()
 
     print(f"Loading and chunking docs from {args.docs_folder} ...")
-    chunks = load_and_chunk_docs(args.docs_folder)
+    chunks, metadata = load_and_chunk_docs(args.docs_folder)
     print(f"Total chunks: {len(chunks)}")
+    print(f"Files processed: {len({m['source'] for m in metadata})}")
 
     print("Storing chunks in vector store using Qwen3 4b embedding ...")
     vector_tool = LocalVectorSearch(cfg={"embedding_model": "qwen3-embedding:4b"})
-    result_json = vector_tool.store_documents(chunks, args.store_name)
+    result_json = vector_tool.store_documents(chunks, args.store_name, metadata=metadata)
     print(f"Ingestion result: {result_json}")
 
 
