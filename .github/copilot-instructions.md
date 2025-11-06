@@ -22,7 +22,7 @@ Consolidated Qwen-Agent implementation with production-grade multi-agent system 
 ```pwsh
 # Setup (Windows PowerShell, Python 3.10 venv required)
 ollama serve                           # Start Ollama
-ollama pull qwen3:8b                   # Pull model (or qwen3:4b)
+ollama pull qwen3:4b-instruct-2507-q4_K_M   # Pull your chosen model
 cp .env.example .env                   # Configure: MODEL_SERVER, MODEL_NAME, API_KEY=EMPTY
 cd production && pip install -e .      # Install qwen_pipeline package
 python -m qwen_pipeline.cli            # Run production HITL pipeline
@@ -91,7 +91,7 @@ def test_run_pipeline(mock_agents, mock_approval):
 
 **LLM config:** `production/qwen_pipeline/config.py:get_llm_config()` reads:
 - `MODEL_SERVER` (default: `http://localhost:11434/v1` — `/v1` suffix required!)
-- `MODEL_NAME` (default: `qwen3:8b`)
+- `MODEL_NAME` (default: `qwen3:4b-instruct-2507-q4_K_M`)
 - `API_KEY` (default: `EMPTY` for Ollama)
 - Returns dict with `generate_cfg: {top_p: 0.8, temperature: 0.7, max_input_tokens: 6000}`
 
@@ -105,7 +105,7 @@ def test_run_pipeline(mock_agents, mock_approval):
 - **Wrong tool I/O:** Always `json5.loads(params: str)` input, `json.dumps(...)` output
 - **Module imports:** Run as module: `python -m qwen_pipeline.cli` (not `python production/cli.py`)
 - **Blocking HITL:** Mock `human_approval` in tests
-- **Missing model:** Run `ollama pull qwen3:8b` before executing
+- **Missing model:** Run `ollama pull <your_model_name>` before executing
 - **Python version:** Only 3.10.x supported
 
 ### Key Files Reference

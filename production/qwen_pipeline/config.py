@@ -74,7 +74,10 @@ def get_llm_config() -> dict[str, Any]:
     model_name: str = os.getenv("MODEL_NAME", "qwen3:8b")
 
     # Validate Ollama connectivity (non-blocking warning)
-    if not _is_ollama_reachable(model_server):
+    # Allow disabling via env: OLLAMA_HEALTHCHECK=0|false|no
+    hc_env = os.getenv("OLLAMA_HEALTHCHECK", "1").strip().lower()
+    hc_enabled = hc_env not in {"0", "false", "no", "off"}
+    if hc_enabled and not _is_ollama_reachable(model_server):
         logger.warning(
             "⚠ Ollama server may not be reachable",
             model_server=model_server,
@@ -98,6 +101,10 @@ def get_llm_config() -> dict[str, Any]:
     max_in = _get_env_int("GEN_MAX_INPUT_TOKENS", None)
     if max_in is not None:
         generate_cfg["max_input_tokens"] = max_in
+    # Limit output length to speed up responses (supported by OpenAI-compatible backends)
+    max_out = _get_env_int("GEN_MAX_TOKENS", None)
+    if max_out is not None:
+        generate_cfg["max_tokens"] = max_out
     fn_type = os.getenv("FN_CALL_PROMPT_TYPE")
     if fn_type:
         generate_cfg["fncall_prompt_type"] = fn_type

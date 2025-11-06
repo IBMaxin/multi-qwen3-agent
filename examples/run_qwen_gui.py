@@ -10,6 +10,11 @@ import os
 import sys
 from pathlib import Path
 
+# Load environment variables from .env file
+from dotenv import load_dotenv
+
+load_dotenv()
+
 # Set up paths
 PROJECT_ROOT = Path(__file__).parent
 os.chdir(PROJECT_ROOT)

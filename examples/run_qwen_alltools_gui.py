@@ -9,6 +9,11 @@ Prereqs:
 - production package installed: from repo root -> cd production && pip install -e .
 """
 
+# Load environment variables from .env file
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from qwen_agent.gui import WebUI
 from qwen_pipeline.agent import create_agents_all_tools_no_keys
 

@@ -30,7 +30,7 @@ cd examples/
 python qwen3-agentV2-complete.py
 ```
 
-## �� What's Included
+## What's Included
 
 ### From qwen-alpha1 (Production Grade):
 - Multi-agent system (Planner, Coder, Reviewer)
@@ -48,9 +48,11 @@ python qwen3-agentV2-complete.py
 
 ## 🎯 Recommended Usage
 
-1. **Learning**: Start with xamples/qwen3-agentV2-complete.py
+1. **Learning**: Start with `examples/qwen3-agentV2-complete.py`
 2. **Development**: Use production/ for serious projects
-3. **GUI**: Try xamples/run_qwen_gui.py for visual interface
+3. **GUI**: Try `examples/run_qwen_gui.py` for visual interface
 
 ---
-*Consolidated from 15+ scattered Qwen projects on November 4, 2025*
+Documentation status: see `DOCUMENTATION_STATUS.md`.
+
+*Consolidated from 15+ scattered Qwen projects on November 6, 2025*

@@ -65,6 +65,11 @@ def test_enable_all_official_tools_and_vl(monkeypatch: pytest.MonkeyPatch) -> No
         },
         raising=True,
     )
+    # Also need to mock _REGISTRY_AVAILABLE so the registry check is enabled
+    monkeypatch.setattr(agent_mod, "_REGISTRY_AVAILABLE", True, raising=True)
+
+    # Clear the LRU cache so the mocked registry is used
+    agent_mod._cached_registry_names.cache_clear()
 
     # Force openpyxl to be missing so amap_weather is skipped
     monkeypatch.setattr(agent_mod._util, "find_spec", lambda name: None, raising=True)
