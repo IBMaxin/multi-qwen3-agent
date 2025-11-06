@@ -158,9 +158,7 @@ class TestE2EToolRegistration:
 
         # Tool should have a name attribute or be registered under 'safe_calculator'
         # Based on @register_tool("safe_calculator") decorator
-        assert "safe_calculator" in str(type(calc).__name__.lower()) or hasattr(
-            calc, "name"
-        )
+        assert "safe_calculator" in str(type(calc).__name__.lower()) or hasattr(calc, "name")
 
 
 class TestE2EJSONHandling:
