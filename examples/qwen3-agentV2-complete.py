@@ -6,16 +6,16 @@ A fully-featured agentic assistant using Qwen-Agent framework
 with all pre-made tools. Configured for Ollama with Qwen3:8b.
 
 This UPGRADED version includes:
-1. A REAL WebSearchTool (using DuckDuckGo)
+1. Official web_search tool (using Serper.dev API)
 2. A SECURE CalculatorTool (using asteval)
 
 Prerequisites:
 1. Install Ollama: https://ollama.com/download
 2. Pull Qwen3: ollama pull qwen3:8b
 3. Install dependencies:
-   pip install -U "qwen-agent[gui,rag,code_interpreter,mcp]" \
-       asteval duckduckgo-search
-4. Start Ollama: ollama serve (runs on http://localhost:11434)
+   pip install -U "qwen-agent[gui,rag,code_interpreter,mcp]" asteval
+4. Configure .env with SERPER_API_KEY (from https://serper.dev)
+5. Start Ollama: ollama serve (runs on http://localhost:11434)
 """
 
 import json
@@ -26,12 +26,16 @@ import json
 import os
 import urllib.parse
 
+# Load environment variables from .env file
+from dotenv import load_dotenv
+
+load_dotenv()
+
 # ---------------------------------------------------------------------------
 # Third-Party Imports
 # ---------------------------------------------------------------------------
 import json5
 from asteval import Interpreter  # <-- UPGRADE 1: Secure math evaluator
-from duckduckgo_search import DDGS  # <-- UPGRADE 2: Real web search
 from qwen_agent.agents import Assistant, ReActChat
 from qwen_agent.gui import WebUI
 from qwen_agent.tools.base import BaseTool
@@ -77,62 +81,6 @@ class MyImageGen(BaseTool):
         prompt_encoded = urllib.parse.quote(prompt)
         image_url = f"https://image.pollinations.ai/prompt/{prompt_encoded}"
         return json.dumps({"image_url": image_url, "prompt": prompt}, ensure_ascii=False)
-
-
-class WebSearchTool(BaseTool):
-    """
-    [UPGRADED] Web search tool that uses DuckDuckGo to get real-time results.
-    """
-
-    name = "web_search"
-    description = (
-        "Search the web for current information. "
-        "Returns a list of search results with titles, "
-        "snippets, and URLs."
-    )
-    parameters = [
-        {"name": "query", "type": "string", "description": "Search query", "required": True},
-        {
-            "name": "max_results",
-            "type": "integer",
-            "description": "Maximum number of results to return (default: 5)",
-            "required": False,
-        },
-    ]
-
-    def __init__(self, *args, **kwargs):
-        """Initialize the DDGS search client."""
-        super().__init__(*args, **kwargs)
-        self.client = DDGS()
-
-    def call(self, params: str, **kwargs) -> str:
-        params_dict = json5.loads(params)
-        query = params_dict["query"]
-        max_results = params_dict.get("max_results", 5)
-
-        try:
-            # Perform the actual search
-            results = self.client.text(
-                keywords=query,
-                region="us-en",  # You can change this
-                safesearch="moderate",
-                max_results=max_results,
-            )
-
-            if not results:
-                return json.dumps(
-                    {"query": query, "results": "No results found."}, ensure_ascii=False
-                )
-
-            # Re-format the results to be simple for the LLM
-            simplified_results = [
-                {"title": r["title"], "snippet": r["body"], "url": r["href"]} for r in results
-            ]
-
-            return json.dumps({"query": query, "results": simplified_results}, ensure_ascii=False)
-
-        except Exception as e:
-            return json.dumps({"error": str(e), "query": query}, ensure_ascii=False)
 
 
 class CalculatorTool(BaseTool):
@@ -272,9 +220,9 @@ Be helpful, accurate, and friendly."""
     if tools is None:
         tools = [
             "code_interpreter",  # Built-in: Python execution
+            "web_search",  # Built-in: Web search via Serper.dev
             MyImageGen(),  # Custom: Image generation
-            WebSearchTool(),  # Custom: Web search (NOW REAL)
-            CalculatorTool(),  # Custom: Calculator (NOW SECURE)
+            CalculatorTool(),  # Custom: Calculator (SECURE with asteval)
             FileSystemTool(),  # Custom: File operations
         ]
 
@@ -293,7 +241,7 @@ def create_react_agent(tools: list | None = None, system_message: str | None = N
     """Create ReAct agent for step-by-step reasoning."""
 
     if tools is None:
-        tools = ["code_interpreter", MyImageGen(), WebSearchTool(), CalculatorTool()]
+        tools = ["code_interpreter", "web_search", MyImageGen(), CalculatorTool()]
 
     if system_message is None:
         system_message = """You use step-by-step reasoning to solve problems.

@@ -20,7 +20,10 @@ def test_human_approval_edit() -> None:
 
 
 def test_human_approval_no() -> None:
-    with patch("builtins.input", return_value="no"), pytest.raises(ValueError):
+    with (
+        patch("builtins.input", return_value="no"),
+        pytest.raises(ValueError, match="stopped the pipeline"),
+    ):
         human_approval("Test", "content")
 
 

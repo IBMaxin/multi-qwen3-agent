@@ -10,10 +10,10 @@
 
 ### Configuration Validation
 - [ ] `MODEL_SERVER` points to Ollama with `/v1` suffix (e.g., `http://localhost:11434/v1`)
-- [ ] `MODEL_NAME` set to supported model (e.g., `qwen3:8b`)
+- [ ] `MODEL_NAME` set to supported model (e.g., `qwen3:4b-instruct-2507-q4_K_M`)
 - [ ] `API_KEY` set to `EMPTY` for Ollama
 - [ ] Ollama running: `ollama serve`
-- [ ] Model pulled: `ollama pull qwen3:8b`
+- [ ] Model pulled: `ollama pull $(MODEL_NAME)` (or manually)
 
 ### Testing & Quality
 - [ ] Unit tests pass: `pytest production/tests/ -v`
