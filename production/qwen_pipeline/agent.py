@@ -156,3 +156,106 @@ def create_agents(tools: list[Any]) -> GroupChat:
     )
     logger.info("Agents created.")
     return _create_agents_cached(sig, flags)
+
+
+def _has_any_env_keys(names: list[str]) -> bool:
+    """Return True if any of the given environment variables are set to a non-empty value."""
+    for n in names:
+        v = os.getenv(n)
+        if v and v.strip():
+            return True
+    return False
+
+
+def create_agents_all_tools_no_keys(
+    *, enable_vl: bool = False, enable_mcp: bool = False
+) -> GroupChat:
+    """Create a GroupChat agent with all available official tools, excluding those requiring
+    API keys that are not configured.
+
+    This uses the official Qwen-Agent registry (when available) to include only registered tools,
+    and excludes tools known to commonly require API keys (e.g., image search/generation) unless
+    corresponding keys are present in the environment. Always includes our registered
+    `safe_calculator` tool.
+
+    Args:
+        enable_vl: Include vision-related tool(s) if available in registry.
+        enable_mcp: Include example MCP servers configuration.
+
+    Returns:
+        GroupChat instance configured with filtered toolset.
+    """
+    registry = _cached_registry_names()
+
+    # Start with baseline tools we always want
+    tools: list[str | dict[str, Any]] = [
+        "code_interpreter",
+        "safe_calculator",  # our registered tool
+    ]
+
+    # Candidate official tools to include when available
+    official_tools: list[str] = [
+        "web_search",
+        "web_extractor",
+        "doc_parser",
+        "simple_doc_parser",
+        "extract_doc_vocabulary",
+        "retrieval",
+        "storage",
+        # Conditional ones handled below:
+        # "image_gen",
+        # "image_search",
+        # "amap_weather",
+    ]
+
+    if enable_vl:
+        official_tools.append("image_zoom_in_qwen3vl")
+
+    # Conditional tool gating based on environment
+    # - amap_weather requires openpyxl + AMAP_API_KEY
+    # - image_gen typically needs a model provider key (e.g., DASHSCOPE_API_KEY or OPENAI_API_KEY)
+    # - image_search often needs a search API key (SERPAPI_API_KEY or BING_API_KEY)
+    try:
+        has_openpyxl = _util.find_spec("openpyxl") is not None
+    except Exception:
+        has_openpyxl = False
+
+    if has_openpyxl and os.getenv("AMAP_API_KEY"):
+        official_tools.append("amap_weather")
+
+    if _has_any_env_keys(["DASHSCOPE_API_KEY", "OPENAI_API_KEY"]):
+        official_tools.append("image_gen")
+
+    if _has_any_env_keys(["SERPAPI_API_KEY", "BING_API_KEY"]):
+        official_tools.append("image_search")
+
+    # Add only tools that are registered and not already present
+    existing = set(_tools_signature(tools))
+    for t in official_tools:
+        if _REGISTRY_AVAILABLE and t not in registry:
+            logger.warning("Skipping unregistered tool", tool=t)
+            continue
+        if t in existing:
+            continue
+        tools.append(t)
+        existing.add(t)
+
+    # Optional: MCP servers
+    if enable_mcp:
+        mcp_config: dict[str, Any] = {
+            "mcpServers": {
+                "time": {"command": "uvx", "args": ["mcp-server-time", "--local-timezone=UTC"]},
+                "fetch": {"command": "uvx", "args": ["mcp-server-fetch"]},
+            }
+        }
+        tools.insert(0, mcp_config)
+
+    # Build directly with the composed tool list; pass flags with enable_all=False to avoid
+    # further automatic augmentation inside the cache builder.
+    sig = _tools_signature([*tools])
+    flags = (
+        False,  # enable_all
+        bool(enable_vl),
+        bool(enable_mcp),
+    )
+    return _create_agents_cached(sig, flags)
