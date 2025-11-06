@@ -40,6 +40,15 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     sub = parser.add_subparsers(dest="command")
     sub.add_parser("metrics", help="Print current metrics and exit")
 
+    gui_parser = sub.add_parser("gui", help="Launch Gradio WebUI for the Qwen Agent")
+    gui_parser.add_argument("--host", default="127.0.0.1", help="Host/IP to bind the GUI server")
+    gui_parser.add_argument("--port", type=int, default=7860, help="Port for the GUI server")
+    gui_parser.add_argument(
+        "--share",
+        action="store_true",
+        help="Enable Gradio share (tunnels public URL). Use only if you understand the risks.",
+    )
+
     parser.add_argument(
         "--stream",
         action="store_true",
@@ -132,5 +141,29 @@ def main() -> None:
         print(_get_metrics_json())
         exit_fn = cast("Callable[[int], None]", sys.exit)
         exit_fn(0)
+        return
+    if args.command == "gui":
+        # Lazy imports to keep CLI startup fast
+        from qwen_agent.gui import WebUI  # noqa: PLC0415
+
+        from .agent import create_agents  # noqa: PLC0415
+
+        tools: list[str] = [
+            "code_interpreter",
+            "safe_calculator",  # provided by our SafeCalculatorTool registration
+        ]
+        agent = create_agents(tools)
+
+        chatbot_config = {
+            "user.name": "You",
+            "input.placeholder": "Ask me anything...",
+        }
+        web_ui = WebUI(agent=agent, chatbot_config=chatbot_config)
+        web_ui.run(
+            server_name=str(getattr(args, "host", "127.0.0.1")),
+            server_port=int(getattr(args, "port", 7860)),
+            share=bool(getattr(args, "share", False)),
+            concurrency_limit=10,
+        )
         return
     _run_interactive(args)
