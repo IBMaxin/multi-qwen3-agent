@@ -145,6 +145,7 @@ def run_pipeline_streaming(
     query: str,
     *,
     require_approval: bool = True,
+    timeout_seconds: int = -1,
 ) -> Iterator[str]:
     """Stream pipeline responses as they are produced.
 
@@ -157,10 +158,20 @@ def run_pipeline_streaming(
 
     manager = create_agents(tools)
     last: str | None = None
-    for response in manager.run(messages=messages):
-        content = response["content"] if isinstance(response, dict) else str(response)
-        last = content
-        yield content
+    # If timeout_seconds < 0, disable timeout checks for streaming
+    if timeout_seconds < 0:
+        for response in manager.run(messages=messages):
+            content = response["content"] if isinstance(response, dict) else str(response)
+            last = content
+            yield content
+    else:
+        with PipelineTimeout(timeout_seconds) as pt:
+            pt.check()  # early/immediate timeout support
+            for response in manager.run(messages=messages):
+                content = response["content"] if isinstance(response, dict) else str(response)
+                last = content
+                yield content
+                pt.check()
 
     if last is None:
         raise ValueError("No response from agent")
