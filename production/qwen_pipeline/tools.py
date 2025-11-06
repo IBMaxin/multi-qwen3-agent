@@ -22,8 +22,11 @@ class SafeCalculatorTool(BaseTool):
         {"name": "expression", "type": "string", "required": True}
     ]
 
-    def __init__(self) -> None:
-        """Initialize the safe interpreter."""
+    def __init__(self, _cfg: dict | None = None) -> None:
+        """Initialize the safe interpreter.
+
+        _cfg: Optional tool configuration passed by qwen-agent registry; ignored.
+        """
         super().__init__()
         self.aeval: Interpreter = Interpreter()
         logger.info("SafeCalculatorTool initialized.")

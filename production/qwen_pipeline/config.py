@@ -2,7 +2,7 @@ import logging
 import os
 from typing import Any
 
-import requests  # type: ignore[import-untyped]
+import requests
 import sentry_sdk
 import structlog
 from dotenv import find_dotenv, load_dotenv

@@ -105,6 +105,8 @@ def test_unregistered_tools_are_skipped(monkeypatch: pytest.MonkeyPatch) -> None
     # Enable official tools, but registry is empty => everything except existing should be skipped
     monkeypatch.setenv("ENABLE_ALL_OFFICIAL_TOOLS", "1")
     monkeypatch.setattr(agent_mod, "QWEN_TOOL_REGISTRY", {}, raising=True)
+    # Clear cached registry names from previous tests
+    agent_mod._cached_registry_names.cache_clear()
 
     manager = create_agents(["code_interpreter"])  # provide only base
     coder = manager.agents[1]

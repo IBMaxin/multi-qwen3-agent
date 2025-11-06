@@ -1,5 +1,7 @@
 import importlib.util as _util
+import json
 import os
+from functools import lru_cache
 from typing import Any
 
 import structlog
@@ -8,8 +10,10 @@ from qwen_agent.agents import Assistant, GroupChat, ReActChat
 try:
     # qwen_agent.agent exposes TOOL_REGISTRY for available builtin tools
     from qwen_agent.agent import TOOL_REGISTRY as QWEN_TOOL_REGISTRY
+    _REGISTRY_AVAILABLE = True
 except Exception:  # pragma: no cover - fallback if API changes
     QWEN_TOOL_REGISTRY = {}
+    _REGISTRY_AVAILABLE = False
 
 from .config import get_llm_config
 
@@ -24,20 +28,44 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return val.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def create_agents(tools: list[Any]) -> GroupChat:
-    """Create and return the group chat agent (GroupChat).
+@lru_cache(maxsize=1)
+def _cached_registry_names() -> set[str]:
+    if isinstance(QWEN_TOOL_REGISTRY, dict):
+        try:
+            return set(QWEN_TOOL_REGISTRY.keys())
+        except Exception:
+            return set()
+    return set()
 
-    Args:
-        tools: List of tools for the agents.
 
-    Returns:
-        GroupChat instance with configured agents.
-    """
+def _normalize_tool_entry(t: Any) -> str:
+    # Normalize tool entry to a stable string for caching/signature
+    if isinstance(t, str):
+        return t
+    if isinstance(t, dict):
+        try:
+            return json.dumps(t, sort_keys=True)
+        except Exception:
+            return str(t)
+    name = getattr(t, "name", None)
+    if isinstance(name, str):
+        return name
+    return str(type(t))
+
+
+def _tools_signature(tools: list[Any]) -> tuple[str, ...]:
+    return tuple(_normalize_tool_entry(t) for t in tools)
+
+
+@lru_cache(maxsize=8)
+def _create_agents_cached(sig: tuple[str, ...], flags: tuple[bool, bool, bool]) -> GroupChat:
+    # Reconstruct tools list from signature for ReActChat (strings are fine for qwen-agent tools)
     llm_cfg = get_llm_config()
-    logger.info("Creating agents.")
+    tools: list[Any] = list(sig)
 
-    # Optionally augment provided tools with official Qwen-Agent tools.
-    if _env_bool("ENABLE_ALL_OFFICIAL_TOOLS", False):
+    enable_all, enable_vl, enable_mcp = flags
+
+    if enable_all:
         official_tools: list[str] = [
             "code_interpreter",
             "web_search",
@@ -51,21 +79,20 @@ def create_agents(tools: list[Any]) -> GroupChat:
             "storage",
             "amap_weather",
         ]
-        # Add Visual tools only if explicitly enabled (requires Qwen3-VL models)
-        if _env_bool("ENABLE_VL_TOOLS", False):
+        if enable_vl:
             official_tools.append("image_zoom_in_qwen3vl")
 
-        # Merge unique items, only if the tool is actually registered in this qwen-agent version
-        existing = {(t if isinstance(t, str) else getattr(t, "name", str(type(t)))) for t in tools}
+        existing = set(sig)
+        registry = _cached_registry_names()
         for t in official_tools:
             if t in existing:
                 continue
-            if isinstance(QWEN_TOOL_REGISTRY, dict) and t not in QWEN_TOOL_REGISTRY:
+            # If the official tool registry is available, strictly honor it.
+            # Empty registry => skip all unlisted tools.
+            if _REGISTRY_AVAILABLE and t not in registry:
                 logger.warning("Skipping unregistered tool", tool=t)
                 continue
-            # Skip tools with heavy optional deps if prerequisites are missing
             if t == "amap_weather":
-                # Requires openpyxl for pandas read_excel and AMAP_API_KEY present
                 try:
                     has_openpyxl = _util.find_spec("openpyxl") is not None
                 except Exception:
@@ -75,8 +102,7 @@ def create_agents(tools: list[Any]) -> GroupChat:
                     continue
             tools.append(t)
 
-        # Optionally include MCP servers if enabled
-        if _env_bool("ENABLE_MCP", False):
+        if enable_mcp:
             mcp_config = {
                 "mcpServers": {
                     "time": {"command": "uvx", "args": ["mcp-server-time", "--local-timezone=UTC"]},
@@ -84,6 +110,7 @@ def create_agents(tools: list[Any]) -> GroupChat:
                 }
             }
             tools.insert(0, mcp_config)
+
     planner = Assistant(
         llm=llm_cfg,
         system_message=(
@@ -107,6 +134,24 @@ def create_agents(tools: list[Any]) -> GroupChat:
         name="reviewer",
     )
     group_agents: list[Assistant | ReActChat] = [planner, coder, reviewer]
-    manager = GroupChat(agents=group_agents, llm=llm_cfg)
+    return GroupChat(agents=group_agents, llm=llm_cfg)
+
+
+def create_agents(tools: list[Any]) -> GroupChat:
+    """Create and return the group chat agent (GroupChat).
+
+    Args:
+        tools: List of tools for the agents.
+
+    Returns:
+        GroupChat instance with configured agents.
+    """
+    logger.info("Creating agents.")
+    sig = _tools_signature(tools)
+    flags = (
+        _env_bool("ENABLE_ALL_OFFICIAL_TOOLS", False),
+        _env_bool("ENABLE_VL_TOOLS", False),
+        _env_bool("ENABLE_MCP", False),
+    )
     logger.info("Agents created.")
-    return manager
+    return _create_agents_cached(sig, flags)

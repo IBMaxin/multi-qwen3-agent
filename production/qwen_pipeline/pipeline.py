@@ -1,3 +1,4 @@
+from collections.abc import Iterator
 from typing import Any
 
 import structlog
@@ -81,3 +82,32 @@ def run_pipeline(query: str) -> str:
         return f"Error: {e!s}"
     else:
         return output
+
+
+def run_pipeline_streaming(
+    query: str,
+    *,
+    require_approval: bool = True,
+) -> Iterator[str]:
+    """Stream pipeline responses as they are produced.
+
+    Yields incremental content strings from the agent. On completion, optionally
+    applies human approval to the final content when require_approval is True.
+    """
+    logger.info({"event": "pipeline_start_streaming", "query": query})
+    tools: list[str | SafeCalculatorTool] = ["code_interpreter", SafeCalculatorTool()]
+    messages: list[dict[str, str]] = [{"role": "user", "content": query}]
+
+    manager = create_agents(tools)
+    last: str | None = None
+    for response in manager.run(messages=messages):
+        content = response["content"] if isinstance(response, dict) else str(response)
+        last = content
+        yield content
+
+    if last is None:
+        raise ValueError("No response from agent")
+
+    if require_approval:
+        last = human_approval("Final Output", last)
+    logger.info({"event": "pipeline_complete_streaming"})
