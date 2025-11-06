@@ -1,9 +1,13 @@
+import time
+import types
 from collections.abc import Iterator
-from typing import Any
+from dataclasses import asdict, dataclass
+from typing import Any, Literal
 
 import structlog
 
 from .agent import create_agents
+from .metrics import get_metrics
 from .tools import SafeCalculatorTool
 
 structlog.configure(logger_factory=structlog.stdlib.LoggerFactory())
@@ -41,16 +45,58 @@ def human_approval(step_name: str, content: str) -> str:
         print("Type yes, no, or edit.")
 
 
-def run_pipeline(query: str) -> str:
+class PipelineTimeoutError(Exception):
+    """Raised when pipeline exceeds the configured timeout."""
+
+
+class PipelineTimeout:
+    """Lightweight timeout guard using periodic checks.
+
+    Windows-safe alternative to signal.alarm; call check() in loops.
+    """
+
+    def __init__(self, seconds: int = 60):
+        self.seconds = max(0, int(seconds))
+        self._start: float = 0.0
+
+    def __enter__(self) -> "PipelineTimeout":
+        self._start = time.perf_counter()
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: types.TracebackType | None,
+    ) -> Literal[False]:
+        # Don't suppress exceptions
+        return False
+
+    def check(self) -> None:
+        if self.seconds == 0:
+            # Immediate timeout if enabled and set to 0
+            msg = f"Pipeline exceeded {self.seconds}s timeout"
+            raise PipelineTimeoutError(msg)
+        if self.seconds > 0:
+            elapsed = time.perf_counter() - self._start
+            if elapsed >= self.seconds:
+                msg = f"Pipeline exceeded {self.seconds}s timeout"
+                raise PipelineTimeoutError(msg)
+
+
+def run_pipeline(query: str, timeout_seconds: int = 60) -> str:
     """Run the full pipeline for a query.
 
     Args:
         query: User query string.
+        timeout_seconds: Max execution time (0 = immediate timeout, <0 disables checks).
 
     Returns:
         Final output or error message.
     """
     logger.info({"event": "pipeline_start", "query": query})
+    metrics = get_metrics()
+    metrics.record_query_start()
     tools: list[str | SafeCalculatorTool] = ["code_interpreter", SafeCalculatorTool()]
     messages: list[dict[str, str]] = [{"role": "user", "content": query}]
 
@@ -61,12 +107,17 @@ def run_pipeline(query: str) -> str:
     try:
         manager = create_agents(tools)
         responses: list[Any] = []
-        for response in manager.run(messages=messages):
-            # ✅ CORRECT: Accumulate all responses
-            if isinstance(response, dict):
-                responses.append(response)
-            else:
-                responses.append({"content": str(response)})
+        with PipelineTimeout(timeout_seconds) as pt:
+            # Initial check (handles 0s immediate timeout deterministically)
+            pt.check()
+            for response in manager.run(messages=messages):
+                # ✅ CORRECT: Accumulate all responses
+                if isinstance(response, dict):
+                    responses.append(response)
+                else:
+                    responses.append({"content": str(response)})
+                # Periodic timeout check per-chunk
+                pt.check()
 
         _ensure_nonempty(responses)
 
@@ -77,8 +128,14 @@ def run_pipeline(query: str) -> str:
 
         output = human_approval("Final Output", output)
         logger.info({"event": "pipeline_complete"})
+        metrics.record_query_end(success=True)
+    except PipelineTimeoutError as e:
+        logger.exception({"event": "pipeline_timeout"})
+        metrics.record_query_end(success=False, error_type=type(e).__name__)
+        return f"Error: Pipeline timeout - {e!s}"
     except Exception as e:
         logger.exception({"event": "pipeline_error"})
+        metrics.record_query_end(success=False, error_type=type(e).__name__)
         return f"Error: {e!s}"
     else:
         return output
@@ -111,3 +168,53 @@ def run_pipeline_streaming(
     if require_approval:
         last = human_approval("Final Output", last)
     logger.info({"event": "pipeline_complete_streaming"})
+
+
+# Structured output mode
+@dataclass
+class PipelineResult:
+    response: str
+    query: str
+    duration_seconds: float
+    success: bool
+    error: str | None = None
+    agents_used: list[str] | None = None
+    tools_available: int = 0
+    timestamp: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def run_pipeline_structured(query: str, timeout_seconds: int = 60) -> PipelineResult:
+    """Run pipeline and return structured result with metadata.
+
+    Does not alter existing run_pipeline behavior; provided as an additive API.
+    """
+    start = time.perf_counter()
+    agents_used = ["planner", "coder", "reviewer"]
+    tools: list[str | SafeCalculatorTool] = ["code_interpreter", SafeCalculatorTool()]
+    tools_available = len(tools)
+    try:
+        output = run_pipeline(query, timeout_seconds=timeout_seconds)
+        success = not output.startswith("Error:")
+        err: str | None = None if success else output
+        return PipelineResult(
+            response=output if success else "",
+            query=query,
+            duration_seconds=time.perf_counter() - start,
+            success=success,
+            error=err,
+            agents_used=agents_used,
+            tools_available=tools_available,
+        )
+    except Exception as e:  # pragma: no cover - defensive guard
+        return PipelineResult(
+            response="",
+            query=query,
+            duration_seconds=time.perf_counter() - start,
+            success=False,
+            error=str(e),
+            agents_used=agents_used,
+            tools_available=tools_available,
+        )
