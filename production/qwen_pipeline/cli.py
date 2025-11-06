@@ -1,3 +1,17 @@
+"""Command-line interface for the Qwen-Agent pipeline.
+
+Provides an interactive chat CLI for querying the agent pipeline, with support
+for streaming responses and other configurations. Also includes commands for
+launching a Gradio WebUI and inspecting performance metrics.
+
+Features:
+- Interactive chat loop
+- Streaming mode (`--stream`)
+- Timeout configuration (`--timeout`)
+- Metrics reporting (`metrics` command)
+- Gradio GUI launcher (`gui` command)
+"""
+
 import argparse
 import sys
 from collections.abc import Callable, Iterator
@@ -79,7 +93,7 @@ def _run_interactive(args: argparse.Namespace) -> None:  # noqa: PLR0912, PLR091
                     continue
 
                 if user_input.lower() in ("exit", "quit", "bye"):
-                    logger.info("CLI exiting gracefully.")
+                    logger.info("cli_exit_graceful")
                     print("Goodbye!")
                     exit_fn = cast("Callable[[int], None]", sys.exit)
                     exit_fn(0)
@@ -106,36 +120,36 @@ def _run_interactive(args: argparse.Namespace) -> None:  # noqa: PLR0912, PLR091
 
             except ValueError as e:
                 # HITL rejection or validation error
-                logger.warning("User rejected or validation failed", error=str(e))
+                logger.warning("cli_user_rejection_or_validation_error", error=str(e))
                 print(f"Operation cancelled: {e}\n")
                 error_count += 1
 
-            except Exception as e:
+            except Exception:
                 # Unexpected error but continue
-                logger.exception("Unexpected error in pipeline")
-                print(f"Error: {e}\nTrying again...\n")
+                logger.exception("cli_unexpected_pipeline_error")
+                print("An unexpected error occurred. Trying again...\n")
                 error_count += 1
 
                 if error_count >= max_errors:
-                    logger.exception("Too many errors, exiting")
+                    logger.exception("cli_max_errors_reached", max_errors=max_errors)
                     print(f"Too many errors ({max_errors}). Exiting.")
                     exit_fn = cast("Callable[[int], None]", sys.exit)
                     exit_fn(1)
                     break
 
     except KeyboardInterrupt:
-        logger.info("CLI interrupted by user (Ctrl+C).")
+        logger.info("cli_interrupt_user")
         print("\n\nGoodbye!")
         sys.exit(0)
     except EOFError:
         # Handle EOF (e.g., when piping input)
-        logger.info("CLI reached EOF.")
+        logger.info("cli_eof_received")
         sys.exit(0)
 
 
 def main() -> None:
     """CLI entry point; parses args and dispatches commands."""
-    logger.info("CLI started.")
+    logger.info("cli_started")
     args = _parse_args(sys.argv[1:])
     if args.command == "metrics":
         print(_get_metrics_json())
@@ -159,6 +173,12 @@ def main() -> None:
             "input.placeholder": "Ask me anything...",
         }
         web_ui = WebUI(agent=agent, chatbot_config=chatbot_config)
+        logger.info(
+            "gui_starting",
+            host=str(getattr(args, "host", "127.0.0.1")),
+            port=int(getattr(args, "port", 7860)),
+            share=bool(getattr(args, "share", False)),
+        )
         web_ui.run(
             server_name=str(getattr(args, "host", "127.0.0.1")),
             server_port=int(getattr(args, "port", 7860)),

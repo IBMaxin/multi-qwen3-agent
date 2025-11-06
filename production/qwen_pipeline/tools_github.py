@@ -1,5 +1,9 @@
 """
 Custom tool for searching a GitHub repository.
+
+This module provides a `GitHubSearchTool` for the Qwen-Agent system, allowing
+agents to search for code within a specified GitHub repository. It uses the
+GitHub API and formats the results for easy consumption by an LLM.
 """
 
 import os
@@ -7,6 +11,7 @@ from http import HTTPStatus
 from typing import Any
 
 import requests
+import structlog
 from qwen_agent.tools.base import BaseTool, register_tool
 
 # GitHub API endpoint for code search
@@ -14,6 +19,8 @@ GITHUB_API_URL = "https://api.github.com/search/code"
 # It's good practice to use a token for higher rate limits,
 # though not strictly required for public repos.
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+
+logger = structlog.get_logger()
 
 
 @register_tool("github_search")
@@ -65,16 +72,33 @@ class GitHubSearchTool(BaseTool):
             query = params_dict.get("query")
 
             if not repo or not query:
+                logger.warning("github_search_missing_params", params=params_dict)
                 return "Error: Both 'repo' and 'query' parameters are required."
 
             # Type narrowing: ensure we have strings
             if not isinstance(repo, str) or not isinstance(query, str):
+                logger.warning(
+                    "github_search_invalid_param_types",
+                    repo_type=type(repo).__name__,
+                    query_type=type(query).__name__,
+                )
                 return "Error: 'repo' and 'query' must be strings."
 
+            logger.info("github_search_started", repo=repo, query=query)
             search_results = self._search_github(repo, query)
-            return self._format_results(search_results)
-
+            formatted_results = self._format_results(search_results)
+            logger.info(
+                "github_search_completed",
+                repo=repo,
+                query=query,
+                results_count=len(search_results),
+            )
         except requests.exceptions.HTTPError as e:
+            logger.exception(
+                "github_search_api_error",
+                status_code=e.response.status_code,
+                response_text=e.response.text,
+            )
             if e.response.status_code == HTTPStatus.UNAUTHORIZED:
                 return (
                     "Error: GitHub API request failed with a 401 Unauthorized error. "
@@ -82,8 +106,11 @@ class GitHubSearchTool(BaseTool):
                     "GitHub Personal Access Token."
                 )
             return f"A GitHub API error occurred: {e}"
-        except Exception as e:
-            return f"An unexpected error occurred: {e}"
+        except Exception:
+            logger.exception("github_search_unexpected_error", raw_params=params)
+            return "An unexpected error occurred during GitHub search."
+        else:
+            return formatted_results
 
     def _search_github(self, repo: str, query: str) -> list[dict[str, Any]]:
         """

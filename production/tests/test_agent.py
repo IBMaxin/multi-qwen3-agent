@@ -23,6 +23,31 @@ from qwen_pipeline.agent import (
 
 
 class TestHelperFunctions:
+    def test_env_bool_invalid_value(self):
+        """Test _env_bool with an invalid value (should return False)."""
+        with patch.dict(os.environ, {"TEST_VAR": "maybe"}):
+            assert _env_bool("TEST_VAR") is False
+
+    def test_cached_registry_names_handles_non_dict(self):
+        """Test _cached_registry_names with non-dict registry."""
+        import qwen_pipeline.agent as agent_mod
+
+        with patch.object(agent_mod, "QWEN_TOOL_REGISTRY", new=[]):
+            # Should return empty set
+            assert agent_mod._cached_registry_names() == set()
+
+    def test_cached_registry_names_handles_exception(self):
+        """Test _cached_registry_names handles exception in keys()."""
+
+        class BadDict(dict):
+            def keys(self):
+                raise Exception("fail")
+
+        import qwen_pipeline.agent as agent_mod
+
+        with patch.object(agent_mod, "QWEN_TOOL_REGISTRY", new=BadDict()):
+            assert agent_mod._cached_registry_names() == set()
+
     """Test utility helper functions."""
 
     def test_env_bool_true_values(self):
@@ -115,6 +140,55 @@ class TestHelperFunctions:
 
 
 class TestCreateAgents:
+    @patch.dict(os.environ, {"ENABLE_ALL_OFFICIAL_TOOLS": "1"})
+    def test_create_agents_empty_registry_skips_unregistered(self):
+        """Test that unregistered tools are skipped if registry is empty."""
+        import qwen_pipeline.agent as agent_mod
+
+        with patch.object(agent_mod, "QWEN_TOOL_REGISTRY", new={}, create=True):
+            agent_mod._cached_registry_names.cache_clear()
+            manager = create_agents(["code_interpreter"])
+            coder = manager.agents[1]
+            # Only code_interpreter should remain
+            if hasattr(coder, "function_map"):
+                tools = list(coder.function_map.keys())
+            else:
+                tools = getattr(coder, "function_list", [])
+            assert tools == ["code_interpreter"]
+
+    @patch("qwen_pipeline.agent._REGISTRY_AVAILABLE", True)
+    @patch(
+        "qwen_pipeline.agent.QWEN_TOOL_REGISTRY",
+        {
+            "web_search": object(),
+            "retrieval": object(),
+            "code_interpreter": object(),
+            "amap_weather": object(),
+        },
+    )
+    @patch("qwen_pipeline.agent.MCPManager")
+    def test_create_agents_all_tools_no_keys(self, mock_mcp_manager):
+        """Test create_agents_all_tools_no_keys covers all branches."""
+        import qwen_pipeline.agent as agent_mod
+
+        agent_mod._cached_registry_names.cache_clear()
+        # Mock MCPManager to return a dummy tool list
+        mock_mcp_manager.return_value.initConfig.return_value = [
+            type("DummyTool", (), {"name": "dummy_mcp"})()
+        ]
+        # Default
+        manager = create_agents_all_tools_no_keys()
+        assert manager is not None
+        # With VL
+        manager = create_agents_all_tools_no_keys(enable_vl=True)
+        assert manager is not None
+        # With MCP
+        manager = create_agents_all_tools_no_keys(enable_mcp=True)
+        assert manager is not None
+        # With both
+        manager = create_agents_all_tools_no_keys(enable_vl=True, enable_mcp=True)
+        assert manager is not None
+
     """Test create_agents function (main agent creation)."""
 
     def test_create_agents_basic(self):
@@ -376,3 +450,70 @@ class TestToolFiltering:
 
         assert manager is not None
         # amap_weather should not be included
+
+
+class TestAgentEnvGatedPaths:
+    """Test ENV-gated tool inclusion/exclusion and registry filtering."""
+
+    @patch.dict(os.environ, {"ENABLE_ALL_OFFICIAL_TOOLS": "1"})
+    @patch("qwen_pipeline.agent._REGISTRY_AVAILABLE", True)
+    @patch(
+        "qwen_pipeline.agent.QWEN_TOOL_REGISTRY",
+        {
+            "web_search": object(),
+            "retrieval": object(),
+            "code_interpreter": object(),
+            "amap_weather": object(),
+        },
+    )
+    def test_official_tools_included_when_env_set(self):
+        import qwen_pipeline.agent as agent_mod
+
+        agent_mod._cached_registry_names.cache_clear()
+        manager = create_agents(["code_interpreter"])
+        tool_names = set(manager.agents[1].function_map.keys())
+        # Should include at least one official tool
+        assert "web_search" in tool_names or "retrieval" in tool_names
+
+    @patch.dict(os.environ, {"ENABLE_ALL_OFFICIAL_TOOLS": "0"})
+    def test_official_tools_not_included_when_env_unset(self):
+        manager = create_agents(["code_interpreter"])
+        tool_names = set(manager.agents[1].function_map.keys())
+        # Should only include code_interpreter
+        assert tool_names == {"code_interpreter"}
+
+    @patch("qwen_pipeline.agent._REGISTRY_AVAILABLE", True)
+    @patch(
+        "qwen_pipeline.agent._cached_registry_names",
+        return_value={"code_interpreter", "web_search"},
+    )
+    def test_registry_filters_unregistered_tools(self, mock_registry):
+        manager = create_agents(["code_interpreter"])
+        tool_names = set(manager.agents[1].function_map.keys())
+        # Only registered tools should be present
+        assert tool_names <= {"code_interpreter", "web_search"}
+
+    @patch.dict(os.environ, {"ENABLE_ALL_OFFICIAL_TOOLS": "1", "ENABLE_MCP": "1"})
+    @patch("qwen_agent.agents.ReActChat.__init__", autospec=True)
+    def test_mcp_config_insertion(self, mock_react_init):
+        # Simulate MCP tool registration by checking the function_list passed to ReActChat
+        def fake_init(self, llm, function_list, system_message, name):
+            self.llm = llm
+            self.function_list = function_list
+            self.system_message = system_message
+            self.name = name
+            self.description = "dummy"
+            # Check that MCP config dict is present in function_list
+            found = any(isinstance(t, dict) and "mcpServers" in t for t in function_list)
+            assert found, (
+                "MCP config dict should be present in function_list " "when ENABLE_MCP is set"
+            )
+
+        mock_react_init.side_effect = fake_init
+        create_agents(["code_interpreter"])
+
+    @patch("qwen_pipeline.agent.QWEN_TOOL_REGISTRY", new_callable=dict)
+    def test_error_handling_missing_registry(self, mock_registry):
+        # Simulate empty registry, should not raise
+        manager = create_agents(["code_interpreter"])
+        assert manager is not None

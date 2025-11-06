@@ -8,6 +8,7 @@ Copyright: Apache License 2.0
 
 from http import HTTPStatus
 from unittest.mock import MagicMock, patch
+import os
 
 import pytest
 import qwen_agent.tools.base as tools_base
@@ -83,7 +84,7 @@ class TestGitHubSearchToolInit:
 
 
 class TestGitHubSearchToolCall:
-    """Test call method (main entry point)."""
+    """Test the call method and error handling of GitHubSearchTool."""
 
     @patch("qwen_pipeline.tools_github.requests.get")
     def test_call_with_dict_params(self, mock_get, github_tool, mock_github_response):
@@ -160,6 +161,91 @@ class TestGitHubSearchToolCall:
         result = github_tool.call(params, extra_param="ignored", another=123)
 
         assert "Found 2 results" in result
+
+    def test_call_missing_params(self, github_tool):
+        # Missing both params
+        result = github_tool.call({})
+        assert "required" in result
+        # Missing repo
+        result = github_tool.call({"query": "foo"})
+        assert "required" in result
+        # Missing query
+        result = github_tool.call({"repo": "QwenLM/Qwen-Agent"})
+        assert "required" in result
+
+    def test_call_non_string_params(self, github_tool):
+        # Non-string repo
+        result = github_tool.call({"repo": 123, "query": "foo"})
+        assert "must be strings" in result
+        # Non-string query
+        result = github_tool.call({"repo": "QwenLM/Qwen-Agent", "query": 456})
+        assert "must be strings" in result
+
+    @patch("qwen_pipeline.tools_github.GitHubSearchTool._search_github")
+    def test_call_no_results(self, mock_search, github_tool):
+        mock_search.return_value = []
+        result = github_tool.call({"repo": "QwenLM/Qwen-Agent", "query": "notfound"})
+        assert "No results found" in result
+
+    @patch("qwen_pipeline.tools_github.GitHubSearchTool._search_github")
+    def test_call_multiple_results(self, mock_search, github_tool, mock_github_response):
+        mock_search.return_value = mock_github_response["items"]
+        result = github_tool.call({"repo": "QwenLM/Qwen-Agent", "query": "Assistant"})
+        assert "Found 2 results" in result
+        assert "File: `src/agents/assistant.py`" in result
+        assert "Snippets" in result
+
+    @patch("qwen_pipeline.tools_github.GitHubSearchTool._search_github")
+    def test_call_handles_exception(self, mock_search, github_tool):
+        mock_search.side_effect = Exception("boom")
+        result = github_tool.call({"repo": "QwenLM/Qwen-Agent", "query": "foo"})
+        assert "unexpected error" in result.lower()
+
+    @patch("qwen_pipeline.tools_github.requests.get")
+    def test_search_github_http_error(self, mock_get, github_tool):
+        # Simulate HTTP 401 error
+        mock_response = MagicMock()
+        mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError(
+            response=MagicMock(status_code=HTTPStatus.UNAUTHORIZED)
+        )
+        mock_get.return_value = mock_response
+        result = github_tool.call({"repo": "QwenLM/Qwen-Agent", "query": "foo"})
+        assert "401 Unauthorized" in result or "401" in result
+
+    @patch("qwen_pipeline.tools_github.requests.get")
+    def test_search_github_success(self, mock_get, github_tool, mock_github_response):
+        # Simulate successful API call
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = mock_github_response
+        mock_get.return_value = mock_response
+        result = github_tool.call({"repo": "QwenLM/Qwen-Agent", "query": "Assistant"})
+        assert "Found 2 results" in result
+        assert "File: `src/agents/assistant.py`" in result
+
+    @patch("qwen_pipeline.tools_github.requests.get")
+    def test_search_github_no_token(self, mock_get, github_tool, mock_github_response):
+        # Simulate no GITHUB_TOKEN in env
+        if "GITHUB_TOKEN" in os.environ:
+            del os.environ["GITHUB_TOKEN"]
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = mock_github_response
+        mock_get.return_value = mock_response
+        result = github_tool.call({"repo": "QwenLM/Qwen-Agent", "query": "Assistant"})
+        assert "Found 2 results" in result
+
+    @patch("qwen_pipeline.tools_github.requests.get")
+    def test_search_github_with_token(self, mock_get, github_tool, mock_github_response):
+        # Simulate GITHUB_TOKEN in env
+        os.environ["GITHUB_TOKEN"] = "fake-token"
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = mock_github_response
+        mock_get.return_value = mock_response
+        result = github_tool.call({"repo": "QwenLM/Qwen-Agent", "query": "Assistant"})
+        assert "Found 2 results" in result
+        del os.environ["GITHUB_TOKEN"]
 
 
 class TestGitHubSearchToolAPIInteraction:

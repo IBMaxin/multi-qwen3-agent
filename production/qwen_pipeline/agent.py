@@ -1,3 +1,18 @@
+"""Agent creation and configuration for Qwen-Agent multi-agent system.
+
+Provides factory functions to create configured agents (Assistant, ReActChat,
+GroupChat) with tool integration, caching, and environment-based configuration.
+
+Supports:
+- GroupChat (Planner → Coder → Reviewer pipeline)
+- Fast ReActChat (single-agent mode)
+- Dynamic tool loading based on API key availability
+- MCP server integration
+
+Copyright: Based on Qwen-Agent patterns from QwenLM/Qwen-Agent
+License: Apache License 2.0
+"""
+
 import importlib.util as _util
 import json
 import os
@@ -97,7 +112,7 @@ def _create_agents_cached(sig: tuple[str, ...], flags: tuple[bool, bool, bool]) 
             # If the official tool registry is available, strictly honor it.
             # Empty registry => skip all unlisted tools.
             if _REGISTRY_AVAILABLE and t not in registry:
-                logger.warning("Skipping unregistered tool", tool=t)
+                logger.warning("tool_not_registered", tool=t)
                 continue
             if t == "amap_weather":
                 try:
@@ -105,7 +120,11 @@ def _create_agents_cached(sig: tuple[str, ...], flags: tuple[bool, bool, bool]) 
                 except Exception:
                     has_openpyxl = False
                 if not (has_openpyxl and os.getenv("AMAP_API_KEY")):
-                    logger.warning("Skipping amap_weather: missing openpyxl or AMAP_API_KEY")
+                    logger.warning(
+                        "amap_weather_skipped",
+                        has_openpyxl=has_openpyxl,
+                        has_api_key=bool(os.getenv("AMAP_API_KEY")),
+                    )
                     continue
             tools.append(t)
 
@@ -155,15 +174,16 @@ def create_agents(tools: list[Any]) -> GroupChat:
     Returns:
         GroupChat instance with configured agents.
     """
-    logger.info("Creating agents.")
+    logger.info("agents_creation_started", tools_count=len(tools))
     sig = _tools_signature(tools)
     flags = (
         _env_bool("ENABLE_ALL_OFFICIAL_TOOLS", False),
         _env_bool("ENABLE_VL_TOOLS", False),
         _env_bool("ENABLE_MCP", False),
     )
-    logger.info("Agents created.")
-    return _create_agents_cached(sig, flags)
+    result = _create_agents_cached(sig, flags)
+    logger.info("agents_created", signature_length=len(sig))
+    return result
 
 
 def _has_any_env_keys(names: list[str]) -> bool:

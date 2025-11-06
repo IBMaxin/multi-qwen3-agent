@@ -234,7 +234,219 @@ Menu options:
 - `production/qwen_pipeline/tools_custom.py:LocalVectorSearch` - Core persistence methods
 - `production/qwen_pipeline/web_rag_ingestion.py` - Orchestration layer
 
-## Pattern 6: Custom RAG with GitHub Code Search
+## Pattern 6: Unified Multi-Source RAG (Web + Local Files)
+
+**Use case:** Centralized knowledge base ingesting from web searches AND local documentation files with unified storage, retrieval, and source attribution.
+
+**Key features:**
+- Single vector store for mixed-source content
+- Metadata tracking for source type, origin, and file format
+- Source-aware query results (web vs local attribution)
+- Consistent chunking and embedding across sources
+- Interactive CLI for ingestion management
+
+**Architecture:**
+```
+┌─────────────────┐         ┌──────────────────┐
+│   Web Topics    │         │  Local Files     │
+│  (search URLs)  │         │  (.md/.txt/.pdf) │
+└────────┬────────┘         └────────┬─────────┘
+         │                           │
+         │    Unified Ingestion      │
+         └───────────┬───────────────┘
+                     │
+         ┌───────────▼──────────────┐
+         │  Chunk + Embed + Store   │
+         │  (LocalVectorSearch)     │
+         └───────────┬──────────────┘
+                     │
+         ┌───────────▼──────────────┐
+         │   FAISS Vector Store     │
+         │  (with source metadata)  │
+         └───────────┬──────────────┘
+                     │
+         ┌───────────▼──────────────┐
+         │   Query with Attribution │
+         │  (web/local separation)  │
+         └──────────────────────────┘
+```
+
+**Implementation:** See `production/qwen_pipeline/unified_ingestion.py`
+
+```python
+from qwen_pipeline.unified_ingestion import ingest_unified
+from qwen_pipeline.tools_custom import LocalVectorSearch
+
+# Step 1: Ingest from multiple sources into single store
+result = ingest_unified(
+    store_name="my_knowledge_base",
+    web_topics=["machine learning basics", "Python best practices"],
+    local_paths=["./docs", "./research_papers", "./README.md"],
+    max_urls_per_topic=5,
+    recursive=True,  # Scan subdirectories
+)
+
+print(f"Ingested {result['total_chunks']} chunks:")
+print(f"  - {result['web_chunks']} from {result['web_urls_processed']} web URLs")
+print(f"  - {result['local_chunks']} from {result['local_files_processed']} local files")
+
+# Step 2: Query with source attribution
+vector_tool = LocalVectorSearch()
+query_result = vector_tool.query_with_source_attribution(
+    store_name="my_knowledge_base",
+    query="What are Python decorators?",
+    k=5
+)
+
+print(f"\nQuery: {query_result['query']}")
+print(f"Total results: {query_result['total_results']}")
+print(f"  - Web sources: {len(query_result['web_results'])}")
+print(f"  - Local sources: {len(query_result['local_results'])}")
+
+# Step 3: Examine results with source metadata
+for result in query_result['all_results']:
+    metadata = result['metadata']
+    print(f"\nSource type: {metadata['source_type']}")
+    print(f"Origin: {metadata['source']}")
+
+    if metadata['source_type'] == 'web':
+        print(f"Topic: {metadata['topic']}")
+    elif metadata['source_type'] == 'local_file':
+        print(f"File type: {metadata['file_type']}")
+
+    print(f"Content: {result['content'][:200]}...")
+    print(f"Similarity score: {result['score']:.4f}")
+
+# Step 4: View store statistics
+stats = vector_tool.get_store_statistics("my_knowledge_base")
+print(f"\n📊 Store Statistics:")
+print(f"Total documents: {stats['total_documents']}")
+print(f"Web documents: {stats['web_documents']}")
+print(f"Local documents: {stats['local_documents']}")
+print(f"File types: {stats['file_types']}")
+print(f"Topics: {stats['topics']}")
+```
+
+**Interactive CLI usage:**
+```bash
+# Start unified ingestion CLI
+python -m qwen_pipeline.ingest_cli
+
+# Menu options:
+# 1. Ingest from web topics only
+# 2. Ingest from local files only
+# 3. Ingest from both (unified) ← Recommended
+# 4. Query with source attribution
+# 5. View store statistics
+# 6. List all vector stores
+```
+
+**Supported local file formats:**
+- `.md` - Markdown (direct read)
+- `.txt` - Plain text (direct read)
+- `.rst` - reStructuredText (direct read)
+- `.pdf` - PDF (requires: `pip install pypdf`)
+- `.docx` - Word documents (requires: `pip install python-docx`)
+
+**Metadata schema:**
+
+For **web sources**:
+```python
+{
+    "source": "https://example.com/article",
+    "source_type": "web",
+    "topic": "machine learning",
+    "chunk_index": 0,
+    "total_chunks": 10,
+    "ingested_at": "2025-11-06T10:30:00Z"
+}
+```
+
+For **local files**:
+```python
+{
+    "source": "/absolute/path/to/file.md",
+    "source_type": "local_file",
+    "file_type": "markdown",  # or "pdf", "text", "docx", "restructuredtext"
+    "chunk_index": 0,
+    "total_chunks": 5,
+    "ingested_at": "2025-11-06T10:30:00Z"
+}
+```
+
+**Benefits of unified approach:**
+- **No code duplication**: Reuses chunking, embedding, storage logic
+- **Single source of truth**: One vector store for all knowledge
+- **Consistent retrieval**: Same query interface for all sources
+- **Source transparency**: Metadata tracks origin for attribution
+- **Extensible**: Easy to add new source types (APIs, databases, etc.)
+
+**Future enhancements (roadmap):**
+- **Reranking**: Add cross-encoder reranking for improved relevance
+- **User feedback**: Track query effectiveness and result quality
+- **Incremental updates**: Detect changed files and re-ingest only deltas
+- **Hybrid search**: Combine vector similarity with keyword search
+- **Source prioritization**: Weight results by source type or recency
+
+**Configuration:**
+```bash
+# .env file
+VECTOR_STORE_PATH=./workspace/vector_stores
+EMBEDDING_MODEL=qwen3-embedding:4b
+EMBEDDING_BASE_URL=http://localhost:11434
+SERPER_API_KEY=your_serper_api_key_here  # For web search
+```
+
+**Performance characteristics:**
+- Local file loading: ~0.01s per file (text formats), ~0.5s per file (PDF)
+- Web extraction: ~2-3s per URL (with retries)
+- Chunking: ~0.1s per 5000 tokens
+- Embedding: ~0.5s per chunk (qwen3-embedding:4b)
+- Query: <0.1s for k=5 results
+
+**Example: Complete workflow**
+```python
+from qwen_pipeline.unified_ingestion import ingest_unified
+from qwen_pipeline.tools_custom import LocalVectorSearch
+
+# 1. Create unified knowledge base
+result = ingest_unified(
+    store_name="ml_research",
+    web_topics=["neural networks", "gradient descent"],
+    local_paths=["./ml_papers", "./ml_notes.md"],
+    max_urls_per_topic=3,
+)
+
+# 2. Query across all sources
+tool = LocalVectorSearch()
+results = tool.query_with_source_attribution(
+    "ml_research",
+    "explain backpropagation",
+    k=5
+)
+
+# 3. Use in RAG agent
+from qwen_agent.agents import ReActChat
+from qwen_pipeline.config import get_llm_config
+
+agent = ReActChat(
+    llm=get_llm_config(),
+    function_list=[tool],
+    system_message="Use local_vector_search to find ML research information."
+)
+
+messages = [{"role": "user", "content": "Explain backpropagation with sources"}]
+for response in agent.run(messages=messages):
+    print(response)
+```
+
+**See also:**
+- `production/qwen_pipeline/unified_ingestion.py` - Core unified ingestion logic
+- `production/qwen_pipeline/ingest_cli.py` - Interactive CLI
+- `examples/unified_rag_demo.py` - Complete demonstration
+- `production/qwen_pipeline/tools_custom.py` - Enhanced LocalVectorSearch with attribution
+
+## Pattern 7: Custom RAG with GitHub Code Search
 
 **Use case:** RAG over GitHub repositories.
 
@@ -268,7 +480,7 @@ for response in agent.run(messages=messages):
 - `repo`: Repository in format `owner/repo`
 - `query`: Search query string
 
-## Pattern 7: RAG Configuration Best Practices
+## Pattern 8: RAG Configuration Best Practices
 
 **Environment-driven configuration:**
 ```bash
@@ -299,7 +511,7 @@ llm_cfg = get_llm_config()
 # }
 ```
 
-## Pattern 7: Custom RAG Tool Template
+## Pattern 9: Custom RAG Tool Template
 
 **Use case:** Create domain-specific RAG tools.
 

@@ -300,7 +300,7 @@ class LocalVectorSearch(BaseSearch):
         try:
             db = self.load_store(store_name)
         except FileNotFoundError:
-            logger.info("store_not_found", store_name=store_name)
+            logger.exception("store_not_found", store_name=store_name)
             return json.dumps([], ensure_ascii=False)
 
         # Perform similarity search with scores
@@ -414,3 +414,113 @@ class LocalVectorSearch(BaseSearch):
             chunks.append("\n\n".join(current_chunk))
 
         return chunks
+
+    def query_with_source_attribution(
+        self, store_name: str, query: str, k: int = 5
+    ) -> dict[str, Any]:
+        """Query vector store and group results by source type.
+
+        Enhanced query method that provides source attribution, grouping
+        results by web vs local sources for better context understanding.
+
+        Args:
+            store_name: Name of the vector store to query
+            query: Search query text
+            k: Number of results to return (default: 5)
+
+        Returns:
+            Dictionary with grouped results:
+            {
+                "query": "search query",
+                "total_results": 5,
+                "web_results": [...],
+                "local_results": [...],
+                "all_results": [...]
+            }
+
+        Example:
+            >>> tool = LocalVectorSearch()
+            >>> result = tool.query_with_source_attribution("knowledge_base", "ML")
+            >>> print(f"Found {result['total_results']} results")
+            >>> print(f"  - {len(result['web_results'])} from web")
+            >>> print(f"  - {len(result['local_results'])} from local files")
+        """
+        results_json = self.query_store(store_name, query, k=k)
+        results: list[dict] = json.loads(results_json)
+
+        # Group by source type
+        web_results = [r for r in results if r.get("metadata", {}).get("source_type") == "web"]
+        local_results = [
+            r for r in results if r.get("metadata", {}).get("source_type") == "local_file"
+        ]
+
+        return {
+            "query": query,
+            "total_results": len(results),
+            "web_results": web_results,
+            "local_results": local_results,
+            "all_results": results,
+        }
+
+    def get_store_statistics(self, store_name: str) -> dict[str, Any]:
+        """Get statistics about a vector store's content.
+
+        Analyzes a stored vector database to provide insights about
+        source distribution, content types, and ingestion metadata.
+
+        Args:
+            store_name: Name of the vector store to analyze
+
+        Returns:
+            Dictionary with statistics:
+            {
+                "total_documents": 100,
+                "web_documents": 60,
+                "local_documents": 40,
+                "file_types": {"markdown": 25, "pdf": 15},
+                "topics": ["ML", "Python"],
+                "store_path": "./workspace/vector_stores/..."
+            }
+
+        Example:
+            >>> tool = LocalVectorSearch()
+            >>> stats = tool.get_store_statistics("my_knowledge")
+            >>> print(f"Total docs: {stats['total_documents']}")
+        """
+        try:
+            db = self.load_store(store_name)
+        except FileNotFoundError:
+            return {"error": "Store not found", "store_name": store_name}
+
+        # Get all documents from the vector store
+        # FAISS doesn't provide direct access to docs, so we use a broad query
+        all_docs_with_scores = db.similarity_search_with_score("", k=10000)
+
+        web_count = 0
+        local_count = 0
+        file_types: dict[str, int] = {}
+        topics: set[str] = set()
+
+        for doc, _score in all_docs_with_scores:
+            metadata = doc.metadata
+            source_type = metadata.get("source_type", "unknown")
+
+            if source_type == "web":
+                web_count += 1
+                if "topic" in metadata:
+                    topics.add(metadata["topic"])
+            elif source_type == "local_file":
+                local_count += 1
+                file_type = metadata.get("file_type", "unknown")
+                file_types[file_type] = file_types.get(file_type, 0) + 1
+
+        store_path = Path(self.vector_store_path) / store_name
+
+        return {
+            "total_documents": len(all_docs_with_scores),
+            "web_documents": web_count,
+            "local_documents": local_count,
+            "file_types": file_types,
+            "topics": sorted(topics),
+            "store_path": str(store_path),
+        }

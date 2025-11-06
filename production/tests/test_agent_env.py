@@ -122,4 +122,13 @@ def test_unregistered_tools_are_skipped(monkeypatch: pytest.MonkeyPatch) -> None
     coder = manager.agents[1]
 
     # Only the base tool remains; others skipped as unregistered
-    assert coder.function_list == ["code_interpreter"]
+    # Support both mock and real ReActChat: check function_list or function_map
+    if hasattr(coder, "function_list"):
+        tools = coder.function_list
+    elif hasattr(coder, "function_map"):
+        # function_map is a dict mapping tool names to callables
+        tools = list(coder.function_map.keys())
+    else:
+        raise AssertionError("Coder agent has neither function_list nor function_map attribute")
+    print(f"DEBUG: tools in coder: {tools}")
+    assert tools == ["code_interpreter"]

@@ -1,3 +1,13 @@
+"""Core pipeline execution logic for the Qwen-Agent system.
+
+Provides functions to run the multi-agent pipeline in different modes:
+- `run_pipeline`: Standard execution, returns final result after HITL.
+- `run_pipeline_streaming`: Yields results incrementally.
+- `run_pipeline_structured`: Returns a detailed result object with metadata.
+
+Includes Human-In-The-Loop (HITL) for approval and a timeout mechanism.
+"""
+
 import time
 import types
 from collections.abc import Iterator
@@ -123,7 +133,7 @@ def run_pipeline(query: str, timeout_seconds: int = 60) -> str:
 
         output: str = responses[-1].get("content", "")
         if not output:
-            logger.warning("Agent returned empty content")
+            logger.warning("agent_empty_content", last_response=responses[-1])
             output = "No response generated"
 
         output = human_approval("Final Output", output)

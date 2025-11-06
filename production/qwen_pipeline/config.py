@@ -1,3 +1,13 @@
+"""Configuration management for Qwen-Agent LLM settings.
+
+Centralized configuration loading from environment variables with
+validation and health checks for Ollama connectivity. Provides
+get_llm_config() as the single source of truth for LLM parameters.
+
+Copyright: Based on Qwen-Agent patterns from QwenLM/Qwen-Agent
+License: Apache License 2.0
+"""
+
 import logging
 import os
 from typing import Any
@@ -36,9 +46,9 @@ def _is_ollama_reachable(model_server: str) -> bool:
 _dotenv_path = find_dotenv(usecwd=True)
 if _dotenv_path:
     load_dotenv(dotenv_path=_dotenv_path, override=False)
-    logger.info("✓ .env file loaded", path=_dotenv_path)
+    logger.info("dotenv_loaded", path=_dotenv_path)
 else:
-    logger.info(".env not found - using environment variables only")
+    logger.info("dotenv_not_found", using="environment variables only")
 
 
 def _get_env_float(name: str, default: float | None) -> float | None:
@@ -48,7 +58,7 @@ def _get_env_float(name: str, default: float | None) -> float | None:
     try:
         return float(val)
     except ValueError:
-        logger.warning("Invalid float for %s: %s", name, val)
+        logger.warning("invalid_float_env_var", name=name, value=val, default=default)
         return default
 
 
@@ -59,7 +69,7 @@ def _get_env_int(name: str, default: int | None) -> int | None:
     try:
         return int(val)
     except ValueError:
-        logger.warning("Invalid int for %s: %s", name, val)
+        logger.warning("invalid_int_env_var", name=name, value=val, default=default)
         return default
 
 
@@ -79,7 +89,7 @@ def get_llm_config() -> dict[str, Any]:
     hc_enabled = hc_env not in {"0", "false", "no", "off"}
     if hc_enabled and not _is_ollama_reachable(model_server):
         logger.warning(
-            "⚠ Ollama server may not be reachable",
+            "ollama_unreachable",
             model_server=model_server,
             tip="Ensure 'ollama serve' is running",
         )
@@ -117,7 +127,7 @@ def get_llm_config() -> dict[str, Any]:
     }
 
     logger.info(
-        "✓ LLM config initialized",
+        "llm_config_initialized",
         model=model_name,
         server=model_server,
     )
@@ -125,6 +135,6 @@ def get_llm_config() -> dict[str, Any]:
     sentry_dsn: str | None = os.getenv("SENTRY_DSN")
     if sentry_dsn:
         sentry_sdk.init(dsn=sentry_dsn, traces_sample_rate=1.0)
-        logger.info("✓ Sentry monitoring enabled")
+        logger.info("sentry_enabled")
 
     return config

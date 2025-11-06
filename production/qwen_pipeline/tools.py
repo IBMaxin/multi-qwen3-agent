@@ -1,3 +1,13 @@
+"""Custom tools for the Qwen-Agent system.
+
+This module defines custom tools that extend the capabilities of the Qwen-Agent.
+Tools defined here follow the `qwen_agent.tools.base.BaseTool` pattern and
+are registered for use by agents.
+
+- SafeCalculatorTool: A secure calculator that uses `asteval` to prevent
+  unsafe code execution.
+"""
+
 import json
 from typing import Any, ClassVar
 
@@ -29,7 +39,7 @@ class SafeCalculatorTool(BaseTool):
         """
         super().__init__()
         self.aeval: Interpreter = Interpreter()
-        logger.info("SafeCalculatorTool initialized.")
+        logger.info("safe_calculator_initialized")
 
     def call(self, params: str, **_kwargs: Any) -> str:  # noqa: PLR0911
         """Call the calculator with robust error handling.
